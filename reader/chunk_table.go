@@ -5,8 +5,8 @@ import (
 	"io"
 	"math"
 
-	"github.com/aoiflux/libewf/ewf/internal/binaryutil"
-	"github.com/aoiflux/libewf/ewf/types"
+	"github.com/aoiflux/libewf/internal/binaryutil"
+	"github.com/aoiflux/libewf/types"
 )
 
 const (

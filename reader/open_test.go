@@ -6,7 +6,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/aoiflux/libewf/ewf/types"
+	"github.com/aoiflux/libewf/types"
 )
 
 func TestOpenV1Header(t *testing.T) {

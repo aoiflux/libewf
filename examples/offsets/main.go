@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/aoiflux/libewf"
-	"github.com/aoiflux/libewf/ewf/metadata"
+	"github.com/aoiflux/libewf/metadata"
 	libtable "github.com/aoiflux/libtable"
 )
 

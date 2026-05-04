@@ -4,8 +4,8 @@ import (
 	"errors"
 	"io"
 
-	"github.com/aoiflux/libewf/ewf/metadata"
-	"github.com/aoiflux/libewf/ewf/reader"
+	"github.com/aoiflux/libewf/metadata"
+	"github.com/aoiflux/libewf/reader"
 )
 
 var (

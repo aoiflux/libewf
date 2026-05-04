@@ -7,10 +7,10 @@ import (
 	"io"
 	"sort"
 
-	"github.com/aoiflux/libewf/ewf/compression"
-	"github.com/aoiflux/libewf/ewf/internal/binaryutil"
-	"github.com/aoiflux/libewf/ewf/metadata"
-	"github.com/aoiflux/libewf/ewf/types"
+	"github.com/aoiflux/libewf/compression"
+	"github.com/aoiflux/libewf/internal/binaryutil"
+	"github.com/aoiflux/libewf/metadata"
+	"github.com/aoiflux/libewf/types"
 )
 
 // SegmentFileType identifies the segment file family.

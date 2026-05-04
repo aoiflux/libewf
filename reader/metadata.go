@@ -1,8 +1,8 @@
 package reader
 
 import (
-	"github.com/aoiflux/libewf/ewf/metadata"
-	"github.com/aoiflux/libewf/ewf/types"
+	"github.com/aoiflux/libewf/metadata"
+	"github.com/aoiflux/libewf/types"
 )
 
 func buildMetadata(header FileHeaderInfo, sections []SectionInfo) metadata.Info {
