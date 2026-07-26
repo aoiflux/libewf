@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/aoiflux/libewf"
 )
@@ -58,6 +59,20 @@ func main() {
 			m.Media.BytesPerSector,
 			m.Media.NumberOfSectors,
 		)
+	}
+
+	if a := m.Acquisition; a != nil {
+		fmt.Printf("case=%q evidence=%q description=%q\n", a.CaseNumber, a.EvidenceNumber, a.Description)
+		fmt.Printf("examiner=%q notes=%q\n", a.ExaminerName, a.Notes)
+		fmt.Printf("tool=%q os=%q\n", a.SoftwareVersion, a.OperatingSystem)
+		if a.Model != "" || a.SerialNumber != "" {
+			fmt.Printf("device model=%q serial=%q\n", a.Model, a.SerialNumber)
+		}
+		if !a.AcquiryDate.IsZero() {
+			fmt.Printf("acquired=%s\n", a.AcquiryDate.Format(time.RFC3339))
+		} else if a.AcquiryDateRaw != "" {
+			fmt.Printf("acquired=%q (unparsed)\n", a.AcquiryDateRaw)
+		}
 	}
 
 	if m.HasMD5Digest {

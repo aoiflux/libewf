@@ -66,21 +66,32 @@ func inflateXML(data []byte) ([]byte, bool) {
 }
 
 // extractXMLDigests pulls MD5 and SHA-1 values out of an xhash document.
-//
-// Element names are matched case-insensitively: libewf writes <MD5> and <SHA1>,
-// but the casing is not guaranteed across writers, and a case-sensitive struct
-// decode would silently return nothing.
 func extractXMLDigests(doc []byte) (md5Hex, sha1Hex string) {
+	values := extractXMLValues(doc, "xhash")
+	return values["md5"], values["sha1"]
+}
+
+// extractXMLValues returns the leaf element names and text of an XML document,
+// keyed by lower-cased element name. The document's own root element, named by
+// root, is not included.
+//
+// Element names are lower-cased because casing is not consistent across
+// writers: libewf spells the digests <MD5> and <SHA1> but the header fields
+// <acquiry_date>. A case-sensitive struct decode would silently return nothing
+// for one or the other.
+func extractXMLValues(doc []byte, root string) map[string]string {
 	decoder := xml.NewDecoder(bytes.NewReader(doc))
 	decoder.Strict = false
 
+	out := make(map[string]string)
 	for {
 		token, err := decoder.Token()
 		if err != nil {
-			if err == io.EOF {
+			// io.EOF ends the document; anything else means it is truncated or
+			// malformed, in which case whatever was already read still stands.
+			if err != io.EOF {
 				break
 			}
-			// Truncated or malformed XML: keep whatever was already read.
 			break
 		}
 
@@ -88,14 +99,8 @@ func extractXMLDigests(doc []byte) (md5Hex, sha1Hex string) {
 		if !ok {
 			continue
 		}
-
-		var target *string
-		switch strings.ToLower(start.Name.Local) {
-		case "md5":
-			target = &md5Hex
-		case "sha1":
-			target = &sha1Hex
-		default:
+		name := strings.ToLower(start.Name.Local)
+		if name == strings.ToLower(root) {
 			continue
 		}
 
@@ -103,7 +108,10 @@ func extractXMLDigests(doc []byte) (md5Hex, sha1Hex string) {
 		if err := decoder.DecodeElement(&value, &start); err != nil {
 			continue
 		}
-		*target = strings.ToLower(strings.TrimSpace(value))
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out[name] = value
+		}
 	}
-	return md5Hex, sha1Hex
+	return out
 }

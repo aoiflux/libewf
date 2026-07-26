@@ -397,6 +397,13 @@ func (r *ImageReader) decodeChunk(chunkNum int) ([]byte, error) {
 		return nil, fmt.Errorf("reader: unable to read chunk %d at offset %d: %w", chunkNum, desc.dataOffset, err)
 	}
 
+	// A pattern-fill chunk stores one repeating unit instead of the chunk's
+	// bytes. Expand it before anything else: it also carries the compressed
+	// flag, and inflating a pattern unit would fail.
+	if desc.pattern {
+		return expandPattern(rawData, r.chunkSize)
+	}
+
 	if desc.compressed {
 		// EWF v1 always uses deflate; v2 uses the segment header compression method.
 		method := desc.compressionMethod
@@ -410,13 +417,36 @@ func (r *ImageReader) decodeChunk(chunkNum int) ([]byte, error) {
 		return out, nil
 	}
 
-	// An uncompressed v1 chunk that overruns a full chunk is carrying its
-	// trailing Adler-32; strip it. A short final chunk is bounded by the
-	// logical device size instead, so it needs no adjustment here.
-	if desc.majorVersion == 1 && int64(len(rawData)) > r.chunkSize {
+	// Strip the trailing Adler-32 that follows an uncompressed chunk. EWF2
+	// states its presence per chunk; EWF v1 leaves it implied, so there it is
+	// inferred from the stored size overrunning a full chunk. A short final v1
+	// chunk needs no adjustment because the logical device size bounds it.
+	switch {
+	case desc.hasChecksum && len(rawData) > chunkTrailerSize:
+		return rawData[:len(rawData)-chunkTrailerSize], nil
+	case desc.majorVersion == 1 && int64(len(rawData)) > r.chunkSize:
 		return rawData[:len(rawData)-chunkTrailerSize], nil
 	}
 	return rawData, nil
+}
+
+// expandPattern repeats a stored pattern unit across a whole chunk.
+func expandPattern(unit []byte, chunkSize int64) ([]byte, error) {
+	if len(unit) == 0 {
+		return nil, fmt.Errorf("reader: pattern chunk has no pattern unit: %w", ewferr.ErrCorruptImage)
+	}
+	if chunkSize <= 0 {
+		return nil, fmt.Errorf("reader: pattern chunk with unknown chunk size: %w", ewferr.ErrCorruptImage)
+	}
+
+	out := make([]byte, chunkSize)
+	// Seed one unit, then double the filled region on each pass so the copy is
+	// logarithmic in the number of repetitions rather than linear.
+	n := copy(out, unit)
+	for n < len(out) {
+		n += copy(out[n:], out[:n])
+	}
+	return out, nil
 }
 
 // validateSegmentSet checks that the supplied segments form one coherent,
@@ -511,6 +541,11 @@ func mergeSegmentMetadata(segments []parsedSegment, mergedChunks []chunkDescript
 			mediaCopy := *meta.Media
 			merged.Media = &mediaCopy
 		}
+		// Header sections likewise live in the first segment; later ones only
+		// matter if it was not supplied.
+		if merged.Acquisition == nil && meta.Acquisition != nil {
+			merged.Acquisition = meta.Acquisition
+		}
 		merged.ChunkTablesRecovered += segments[i].stats.TablesRecovered
 		merged.ChunkTablesInvalid += segments[i].stats.TablesInvalid
 	}
@@ -576,6 +611,14 @@ func (r *ImageReader) Metadata() metadata.Info {
 	if r.metadata.Media != nil {
 		mediaCopy := *r.metadata.Media
 		out.Media = &mediaCopy
+	}
+	if r.metadata.Acquisition != nil {
+		acqCopy := *r.metadata.Acquisition
+		acqCopy.Values = make(map[string]string, len(r.metadata.Acquisition.Values))
+		for key, value := range r.metadata.Acquisition.Values {
+			acqCopy.Values[key] = value
+		}
+		out.Acquisition = &acqCopy
 	}
 	return out
 }

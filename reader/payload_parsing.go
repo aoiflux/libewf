@@ -12,10 +12,16 @@ import (
 const (
 	ewfVolumeSize      = 1052 // sizeof(ewf_volume_t)       — EWF-E01/L01
 	ewfVolumeSmartSize = 94   // sizeof(ewf_volume_smart_t) — EWF-S01
-	ewfHashSize        = 36
-	ewfDigestSize      = 80
-	ewfMD5HashSize     = 32
-	ewfSHA1HashSize    = 32
+	ewfHashSize        = 36 // sizeof(ewf_hash_t)   — v1 "hash" section
+	ewfDigestSize      = 80 // sizeof(ewf_digest_t) — v1 "digest" section
+
+	// Digest lengths, not section sizes. The EWF2 md5_hash and sha1_hash
+	// sections are 32 bytes on disk, but the trailing padding is reported
+	// separately and stripped before the body reaches a parser, so requiring
+	// the full 32 bytes would reject every real one: an md5_hash body arrives
+	// as 20 bytes (digest plus checksum) and a sha1_hash body as 24.
+	ewfMD5DigestLength  = 16
+	ewfSHA1DigestLength = 20
 
 	// maxSectionPayload bounds a metadata section body read. Section sizes
 	// are read straight from the image, so a damaged size field must not be
@@ -32,6 +38,10 @@ func populateMetadataFromSectionBodies(source io.ReaderAt, header FileHeaderInfo
 	// the digests are idempotent and need no such guard.
 	sessionParsed := false
 	errorsParsed := false
+
+	// Header sections are collected rather than applied as they are met, so
+	// their precedence does not depend on the order they appear in the file.
+	var headers headerPayloads
 
 	for _, section := range sections {
 		payloadSize := sectionPayloadSize(section)
@@ -52,6 +62,13 @@ func populateMetadataFromSectionBodies(source io.ReaderAt, header FileHeaderInfo
 				case len(data) >= ewfVolumeSmartSize:
 					parseVolumeSectionS01(data, info)
 				}
+			} else {
+				parseDeviceInformationV2(data, info)
+			}
+
+		case types.SectionTypeCaseData:
+			if header.MajorVersion != 1 {
+				parseCaseDataV2(data, info)
 			}
 		case types.SectionTypeMD5Hash:
 			parseMD5LikeSection(header.MajorVersion, data, info)
@@ -74,11 +91,29 @@ func populateMetadataFromSectionBodies(source io.ReaderAt, header FileHeaderInfo
 			// EWF v1 identifies sections by name and has several with no
 			// counterpart in the v2 type enumeration, so they carry no type
 			// code. Dispatch those on their name.
-			if header.MajorVersion == 1 && section.TypeString == "xhash" {
+			if header.MajorVersion != 1 {
+				continue
+			}
+			switch section.TypeString {
+			case "xhash":
 				parseXHashSection(data, info)
+			case "header":
+				if headers.header == nil {
+					headers.header = data
+				}
+			case "header2":
+				if headers.header2 == nil {
+					headers.header2 = data
+				}
+			case "xheader":
+				if headers.xheader == nil {
+					headers.xheader = data
+				}
 			}
 		}
 	}
+
+	resolveAcquisition(headers, info)
 }
 
 func sectionPayloadSize(section SectionInfo) uint64 {
@@ -136,22 +171,16 @@ func parseMD5LikeSection(majorVersion uint8, data []byte, info *metadata.Info) {
 		}
 		return
 	}
-	if len(data) >= ewfMD5HashSize {
-		copy(info.MD5Digest[:], data[0:16])
+	if len(data) >= ewfMD5DigestLength {
+		copy(info.MD5Digest[:], data[0:ewfMD5DigestLength])
 		info.HasMD5Digest = true
 	}
 }
 
 func parseSHA1Section(majorVersion uint8, data []byte, info *metadata.Info) {
-	if majorVersion == 2 {
-		if len(data) >= ewfSHA1HashSize {
-			copy(info.SHA1Digest[:], data[0:20])
-			info.HasSHA1Digest = true
-		}
-		return
-	}
-	if len(data) >= 20 {
-		copy(info.SHA1Digest[:], data[0:20])
+	_ = majorVersion // both versions place the digest at offset 0
+	if len(data) >= ewfSHA1DigestLength {
+		copy(info.SHA1Digest[:], data[0:ewfSHA1DigestLength])
 		info.HasSHA1Digest = true
 	}
 }

@@ -33,6 +33,17 @@ type chunkDescriptor struct {
 	compressed        bool
 	majorVersion      uint8
 	compressionMethod uint16
+
+	// pattern marks an EWF2 chunk stored as a repeating fill rather than as
+	// data: the stored bytes are one pattern unit to be repeated across the
+	// whole chunk. Writers use it for long runs of identical bytes, so it is
+	// common rather than exotic — an all-zero region produces nothing else.
+	pattern bool
+
+	// hasChecksum marks a chunk whose stored bytes end with a trailing
+	// Adler-32 that is not device data. EWF2 states this per chunk; EWF v1
+	// leaves it implied by the stored size.
+	hasChecksum bool
 }
 
 // chunkTableStats records how the chunk table was recovered, for reporting.
@@ -311,7 +322,12 @@ func parseTableSectionV2(source io.ReaderAt, header FileHeaderInfo, section Sect
 		chunks[i].dataOffset = int64(binary.LittleEndian.Uint64(entriesData[off : off+8]))
 		chunks[i].dataSize = binary.LittleEndian.Uint32(entriesData[off+8 : off+12])
 		flags := binary.LittleEndian.Uint32(entriesData[off+12 : off+16])
-		chunks[i].compressed = (flags & types.ChunkDataFlagCompressed) != 0
+		// A pattern-fill chunk also carries the compressed flag, so pattern
+		// must be tested first: its stored bytes are a repeating unit, not a
+		// compressed stream, and inflating them would fail.
+		chunks[i].pattern = (flags & types.ChunkDataFlagPattern) != 0
+		chunks[i].compressed = !chunks[i].pattern && (flags&types.ChunkDataFlagCompressed) != 0
+		chunks[i].hasChecksum = (flags & types.ChunkDataFlagChecksum) != 0
 		chunks[i].majorVersion = header.MajorVersion
 		chunks[i].compressionMethod = header.CompressionMethod
 	}

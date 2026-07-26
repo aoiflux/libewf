@@ -12,8 +12,11 @@ import (
 	"strings"
 	"testing"
 
+	"time"
+
 	libewf "github.com/aoiflux/libewf"
 	"github.com/aoiflux/libewf/internal/corpus"
+	"github.com/aoiflux/libewf/metadata"
 )
 
 // corpusDir holds images produced by real acquisition tools. It is populated
@@ -112,6 +115,11 @@ func runCorpusEntry(t *testing.T, entry corpus.Entry) {
 		}
 	}
 
+	// --- acquisition provenance -------------------------------------------
+	if want := entry.ExpectAcquisition; want != nil {
+		checkAcquisition(t, meta.Acquisition, want)
+	}
+
 	// --- decoded stream against the raw source ----------------------------
 	if entry.DecodedSHA256 != "" {
 		sum := sha256.New()
@@ -154,6 +162,46 @@ func runCorpusEntry(t *testing.T, entry corpus.Entry) {
 	// A filesystem parser issues small unaligned reads; results must not
 	// depend on how the caller slices them up.
 	checkGranularity(t, r)
+}
+
+// checkAcquisition compares the decoded provenance against values that came
+// from outside this library: the strings handed to the acquisition tool, and
+// ewfinfo's reading of the date it wrote.
+func checkAcquisition(t *testing.T, got *metadata.Acquisition, want *corpus.ExpectedAcquisition) {
+	t.Helper()
+
+	if got == nil {
+		t.Error("Metadata().Acquisition is nil, want provenance decoded from the header sections")
+		return
+	}
+
+	for _, field := range []struct {
+		name      string
+		got, want string
+	}{
+		{"CaseNumber", got.CaseNumber, want.CaseNumber},
+		{"EvidenceNumber", got.EvidenceNumber, want.EvidenceNumber},
+		{"Description", got.Description, want.Description},
+		{"ExaminerName", got.ExaminerName, want.ExaminerName},
+		{"Notes", got.Notes, want.Notes},
+	} {
+		if field.want != "" && field.got != field.want {
+			t.Errorf("Acquisition.%s = %q, want %q (from the acquisition command line)",
+				field.name, field.got, field.want)
+		}
+	}
+
+	if want.AcquiryDateUnix != 0 {
+		if got.AcquiryDate.IsZero() {
+			t.Errorf("Acquisition.AcquiryDate is zero, want %s (raw %q)",
+				time.Unix(want.AcquiryDateUnix, 0), got.AcquiryDateRaw)
+		} else if gotUnix := got.AcquiryDate.Unix(); gotUnix != want.AcquiryDateUnix {
+			t.Errorf("Acquisition.AcquiryDate = %s (%d), want %s (%d); raw value was %q",
+				got.AcquiryDate, gotUnix,
+				time.Unix(want.AcquiryDateUnix, 0), want.AcquiryDateUnix,
+				got.AcquiryDateRaw)
+		}
+	}
 }
 
 func checkGranularity(t *testing.T, r libewf.Reader) {

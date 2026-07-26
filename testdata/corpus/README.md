@@ -85,15 +85,43 @@ Worth recording, because it is the argument for keeping it:
   asserted a SHA-1 on ten dialects that have nowhere to put one. Expected values
   now come from `ewfinfo`.
 
+## Getting EWF2 (`.Ex01`) coverage
+
+The `ex01-*` variants need a writer that can actually produce EWF2. Distribution
+packages cannot: Debian and Ubuntu ship libewf 20140814, which accepts
+`-f encase7-v2` and then prints *"Unsupported EWF format defaulting to:
+encase6"* and writes a `.E01`. `mkcorpus` detects that from the extension and
+skips those variants, so a corpus built with the packaged tool silently has no
+EWF2 entries — deliberately, rather than recording entries that claim coverage
+they do not have.
+
+To get them, build a recent libewf. EWF2 write support lives in the
+*experimental* tarballs. No root is needed; run the binaries from the build tree:
+
+```
+curl -sSLO https://github.com/libyal/libewf/releases/download/20240506/libewf-experimental-20240506.tar.gz
+tar xzf libewf-experimental-20240506.tar.gz
+cd libewf-20240506 && ./configure && make -j"$(nproc)"
+
+PATH="$PWD/ewftools:$PATH" go run ./tools/mkcorpus -out testdata/corpus
+```
+
+Confirm with `ewfacquire -V` that you are on 20240506 or newer, and that
+`ls testdata/corpus/*.Ex01` is non-empty afterwards.
+
 ## Still missing
 
-- **EWF2 (`.Ex01`)** entries. `encase7-v2` is deliberately absent from the matrix
-  because the reader does not decode EWF2 volume geometry yet; those entries
-  would fail for a documented reason rather than a discovered one. Adding them is
-  the natural first extension once Ex01 support lands.
 - **Images from EnCase, FTK Imager and Guymager proper.** `ewfacquire` and those
   tools share no code path, and each has its own header dialect, so a corpus
   built only from `ewfacquire` leaves the commercial writers unvalidated. The
   `-adopt` mode exists for exactly this.
+- **Logical evidence (`.L01` / `.Lx01`).** No libewf tool writes logical
+  evidence — `ewfacquire` only performs physical acquisition — so there is no way
+  to produce a sample here. Implementing the `ltree` parser without one would
+  mean testing the reader against our own model of the format, which is exactly
+  the circularity that let the `table2` chunk-table bug survive a green suite.
+  An adopted real `.L01` is a prerequisite, not a nice-to-have.
+- **bzip2 chunk compression.** EWF2 permits it, but `ewfacquire` falls back to
+  deflate when asked, so the code path has no test image.
 - **Cross-validation against `ewfexport`.** The raw-source oracle is stronger,
   but an independent decoder disagreeing would be worth knowing about.

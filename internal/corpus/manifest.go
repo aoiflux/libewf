@@ -80,9 +80,29 @@ type Entry struct {
 	// with no undecodable spans.
 	RequireVerifyOK bool `json:"requireVerifyOK,omitempty"`
 
+	// ExpectAcquisition holds the provenance the image should report. For
+	// generated entries these are the values passed to the acquisition tool on
+	// its command line, which makes them an oracle no decode can influence.
+	ExpectAcquisition *ExpectedAcquisition `json:"expectAcquisition,omitempty"`
+
 	// ExpectIncomplete marks an entry that is deliberately missing segments,
 	// so opening it must fail rather than decode a truncated device.
 	ExpectIncomplete bool `json:"expectIncomplete,omitempty"`
+}
+
+// ExpectedAcquisition is the provenance a correct reader must recover from an
+// image's header sections. An empty field means "do not check".
+type ExpectedAcquisition struct {
+	CaseNumber     string `json:"caseNumber,omitempty"`
+	EvidenceNumber string `json:"evidenceNumber,omitempty"`
+	Description    string `json:"description,omitempty"`
+	ExaminerName   string `json:"examinerName,omitempty"`
+	Notes          string `json:"notes,omitempty"`
+
+	// AcquiryDateUnix is the acquisition instant in seconds since the epoch.
+	// Zero means "do not check". Header sections store this three different
+	// ways, so pinning it catches a date decoded from the wrong encoding.
+	AcquiryDateUnix int64 `json:"acquiryDateUnix,omitempty"`
 }
 
 // Manifest is the corpus index.

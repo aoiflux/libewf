@@ -15,7 +15,7 @@ project and is not a port of it; it is distributed under the MIT license.
 - Root import API: `github.com/aoiflux/libewf`
 - EWF format support:
   - EWF v1 (EVF) — `.E01` physical images
-  - EWF v2 (EVF2) — `.Ex01` physical images
+  - EWF v2 (EVF2) — `.Ex01` physical images, including pattern-fill chunks
   - EWF v1 Logical (LVF) `.L01` and EWF v2 Logical (LEF2) `.Lx01` — **detected
     only**; per-file enumeration is not implemented yet (see [Limitations](#limitations))
 - Multi-segment image support (`OpenSegments`), with completeness validation
@@ -205,6 +205,37 @@ digests at all, because there is then nothing to verify against.
 
 `Verify` reads the entire device and honours `ctx` cancellation.
 
+### Acquisition provenance
+
+`Metadata().Acquisition` carries what the imaging tool recorded: who acquired the
+evidence, from what, when, and with which tool. It is nil when the image has no
+header section this library can decode.
+
+```go
+if a := r.Metadata().Acquisition; a != nil {
+    fmt.Println(a.CaseNumber, a.EvidenceNumber, a.ExaminerName)
+    fmt.Println(a.AcquiryDate, a.SoftwareVersion, a.OperatingSystem)
+}
+```
+
+In EWF v1 the same information is stored in up to three sections with different
+encodings — `header` (8-bit, tab-delimited), `header2` (UTF-16LE) and `xheader`
+(XML) — and most images carry more than one. `header2` wins where present, since
+it cannot mangle non-ASCII case notes and stores dates as unambiguous POSIX
+timestamps; lower-precedence sections still fill fields it left empty.
+`Acquisition.Source` names the section that won, and `Acquisition.Values` exposes
+every raw identifier/value pair including ones with no dedicated field.
+
+EWF v2 replaces those with `case_data` and `device_information`, which between
+them carry both the provenance and the media geometry. Both contribute to one
+`Acquisition`: the device model, serial number and label come from
+`device_information`, everything else from `case_data`.
+
+Dates are stored three different ways: a POSIX timestamp, six space-separated
+numbers, or a ctime-like string. Only the first carries a timezone, so the other
+two are interpreted in the local zone — `AcquiryDateRaw` and `SystemDateRaw`
+preserve the stored text for anything that must round-trip exactly.
+
 ### Errors
 
 All errors are comparable with `errors.Is`:
@@ -297,6 +328,7 @@ reads within a chunk.
 | `HasSHA1Digest` / `SHA1Digest`      | `bool` / `[20]byte`  | SHA1 integrity digest                             |
 | `Sessions`                          | `[]SessionEntry`     | Session table entries                             |
 | `AcquisitionErrors`                 | `[]AcquisitionError` | Sectors that could not be read during acquisition |
+| `Acquisition`                       | `*Acquisition`       | Provenance recorded at imaging time, or nil       |
 | `ObservedChunkCount`                | `uint64`             | Chunks actually decoded from the supplied segments |
 | `ChunkTablesRecovered`              | `int`                | Chunk tables read from their `table2` backup      |
 | `ChunkTablesInvalid`                | `int`                | Chunk tables where no copy passed its checksum    |
@@ -358,21 +390,29 @@ Optional flags:
 
 ## Validation status
 
-The reader is checked against images written by `ewfacquire` across 26
+The reader is checked against images written by `ewfacquire` across 30
 configurations, with the decoded stream compared byte-for-byte against the raw
-device that was acquired, and the acquisition digests recomputed from the decode
-and compared with the ones `ewfinfo` reads out of the container.
+device that was acquired, the acquisition digests recomputed from the decode and
+compared with the ones `ewfinfo` reads out of the container, and the provenance
+compared against the values the acquisition was invoked with.
 
 Covered: `ewf`, `ewfx`, `smart` (`.s01`), `ftk`, `encase2` through `encase7`,
-`linen5` through `linen7`; uncompressed, deflate fast/best/empty-block; 16, 64
-and 512 sectors per chunk; 512- and 4096-byte sectors; single and multi-segment
-sets; all-zero and incompressible payloads; and devices whose size is not a
-whole multiple of the chunk size.
+`linen5` through `linen7`, and `encase7-v2` (`.Ex01`); uncompressed, deflate
+fast/best/empty-block, and EWF2 pattern-fill chunks; 16, 64 and 512 sectors per
+chunk; 512- and 4096-byte sectors; single and multi-segment sets; all-zero and
+incompressible payloads; and devices whose size is not a whole multiple of the
+chunk size.
 
-Not covered: EWF2 (`.Ex01`) — see [Limitations](#limitations) — and images from
-EnCase, FTK Imager or Guymager proper. Those writers do not share a code path
-with `ewfacquire` and each has its own header dialect, so the commercial writers
-remain unvalidated. See [testdata/corpus/README.md](testdata/corpus/README.md).
+Not covered: images from EnCase, FTK Imager or Guymager proper. Those writers do
+not share a code path with `ewfacquire` and each has its own header dialect, so
+the commercial writers remain unvalidated. Nor is bzip2 chunk compression:
+`ewfacquire` falls back to deflate when asked for it, so no test image exercises
+that path. See [testdata/corpus/README.md](testdata/corpus/README.md).
+
+Generating the `.Ex01` entries needs libewf 20240506 or newer. Distribution
+packages (Debian and Ubuntu ship 20140506-era builds) accept `-f encase7-v2` and
+then silently write an `.E01`; `mkcorpus` detects that and skips those variants
+rather than recording an entry that claims EWF2 coverage it does not have.
 
 ## Limitations
 
@@ -381,20 +421,22 @@ Known gaps, stated explicitly so they are not discovered at integration time:
 - **Logical evidence (`.L01` / `.Lx01`) is detected but not enumerated.** The
   file signature is recognised and metadata parses, but the `ltree` and
   `single_files_data` sections are not decoded, so individual files cannot be
-  listed or read yet.
+  listed or read yet. No libewf tool can write logical evidence, so there is no
+  way to validate an implementation against a real sample — see
+  [testdata/corpus/README.md](testdata/corpus/README.md).
 - **Encrypted images cannot be read.** They are detected and rejected with
   `ErrEncrypted` rather than decoded; decryption of `.Ex01` is not implemented.
-- **Acquisition metadata is not parsed.** The `header`, `header2` and `xheader`
-  sections carry case number, examiner, acquisition date and imaging tool.
-  They are listed in the section inventory but their contents are not decoded.
-  (Digests in `xhash` *are* decoded; the descriptive fields are not.)
-- **EWF v2 volume geometry is not parsed**, so `Size()` returns 0 for `.Ex01`
-  images and `ReadAt` reports `ErrCorruptImage`.
+- **Source-device blocks are not parsed.** EnCase 6 and later append `srce` and
+  `sub` blocks to the header describing the acquired device in a nested table
+  form. The `main` block, which carries the acquisition provenance, is decoded;
+  these are skipped.
 - **EWF v2 requires more than a bare `io.ReaderAt`.** Its section chain is
   walked from the end of the file, so the source must also provide `Size()`,
   `Len()` or `Stat()` — `os.File`, `bytes.Reader` and `io.SectionReader` all do.
 - **Only chunk-table checksums are validated.** Section descriptors carry their
   own Adler-32 values, which are read but not currently verified.
+- **bzip2 chunk compression is untested.** EWF2 permits it and the code path
+  exists, but no available writer produces it.
 
 ## Non-goals
 
