@@ -1,0 +1,18 @@
+# Build artefacts
+*.exe
+*.test
+*.out
+
+# The corpus is a build artefact, not source. Generated images are reproducible
+# with tools/mkcorpus, and adopted ones are usually real evidence that must not
+# be published.
+#
+# manifest.json is excluded deliberately: committing it without the images it
+# references would make a fresh clone fail to open them rather than skip the
+# corpus test. What the corpus should contain lives in tools/mkcorpus instead,
+# where it is version-controlled as code. See testdata/corpus/README.md.
+testdata/corpus/*
+!testdata/corpus/README.md
+
+# Fuzzing corpora grow without bound and are machine-specific.
+testdata/fuzz/

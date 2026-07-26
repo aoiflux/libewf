@@ -218,13 +218,19 @@ func mapV1TypeString(typeString string) uint32 {
 		return types.SectionTypeErrorTable
 	case "session":
 		return types.SectionTypeSessionTable
-	case "digest":
+	case "digest", "hash":
+		// Both carry an MD5 at offset 0. "digest" (80 bytes) additionally
+		// carries a SHA-1 at offset 16; "hash" (36 bytes) does not. The
+		// payload parser distinguishes them by size.
 		return types.SectionTypeMD5Hash
-	case "xhash", "hash":
-		return types.SectionTypeSHA1Hash
 	case "disk", "volume", "data":
 		return types.SectionTypeDeviceInformation
 	default:
+		// "xhash" is a zlib-compressed XML document, not a raw digest, and
+		// "header"/"header2"/"xheader" carry acquisition metadata. None are
+		// decoded yet; classifying them as a digest section would fabricate
+		// hash values, so they stay unclassified. TypeString still records
+		// what they are.
 		return 0
 	}
 }

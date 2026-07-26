@@ -16,12 +16,26 @@ const (
 	ewfDigestSize      = 80
 	ewfMD5HashSize     = 32
 	ewfSHA1HashSize    = 32
+
+	// maxSectionPayload bounds a metadata section body read. Section sizes
+	// are read straight from the image, so a damaged size field must not be
+	// allowed to drive a huge allocation. The largest legitimate metadata
+	// section is orders of magnitude below this.
+	maxSectionPayload = 64 << 20
 )
 
 func populateMetadataFromSectionBodies(source io.ReaderAt, header FileHeaderInfo, sections []SectionInfo, info *metadata.Info) {
+	// EWF writes backup copies of some sections under a second name within
+	// the same segment ("error" / "error2"). Parsing both would duplicate
+	// every entry in the accumulated slices, so only the first of each
+	// list-valued section is consumed per segment. Scalar sections such as
+	// the digests are idempotent and need no such guard.
+	sessionParsed := false
+	errorsParsed := false
+
 	for _, section := range sections {
 		payloadSize := sectionPayloadSize(section)
-		if payloadSize == 0 {
+		if payloadSize == 0 || payloadSize > maxSectionPayload {
 			continue
 		}
 		data, err := binaryutil.ReadSlice(source, section.DataOffset, int(payloadSize))
@@ -44,9 +58,25 @@ func populateMetadataFromSectionBodies(source io.ReaderAt, header FileHeaderInfo
 		case types.SectionTypeSHA1Hash:
 			parseSHA1Section(header.MajorVersion, data, info)
 		case types.SectionTypeSessionTable:
+			if sessionParsed {
+				continue
+			}
 			parseSessionSection(header.MajorVersion, data, info)
+			sessionParsed = true
 		case types.SectionTypeErrorTable:
+			if errorsParsed {
+				continue
+			}
 			parseErrorSection(header.MajorVersion, data, info)
+			errorsParsed = true
+
+		default:
+			// EWF v1 identifies sections by name and has several with no
+			// counterpart in the v2 type enumeration, so they carry no type
+			// code. Dispatch those on their name.
+			if header.MajorVersion == 1 && section.TypeString == "xhash" {
+				parseXHashSection(data, info)
+			}
 		}
 	}
 }

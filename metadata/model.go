@@ -20,6 +20,21 @@ type Info struct {
 	SHA1Digest             [20]byte
 	Sessions               []SessionEntry
 	AcquisitionErrors      []AcquisitionError
+
+	// ObservedChunkCount is the number of chunk descriptors actually decoded
+	// from the supplied segments. Media.NumberOfChunks is the count declared
+	// by the volume section; the two differ when segments are missing or a
+	// chunk table could not be decoded.
+	ObservedChunkCount uint64
+
+	// ChunkTablesRecovered counts chunk-table groups whose primary "table"
+	// section failed its checksum and were decoded from the "table2" backup.
+	ChunkTablesRecovered int
+
+	// ChunkTablesInvalid counts chunk-table groups where neither the primary
+	// nor the backup copy validated. Their chunks were decoded unverified and
+	// the data they describe should be treated as suspect.
+	ChunkTablesInvalid int
 }
 
 // Section captures descriptor-level metadata for one section in logical order.

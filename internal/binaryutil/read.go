@@ -12,10 +12,24 @@ type StructDecoder interface {
 	DecodeBinary(data []byte, order binary.ByteOrder) error
 }
 
+// MaxReadSize bounds a single ReadSlice allocation.
+//
+// Every size passed to ReadSlice ultimately comes from the image being
+// parsed, so a corrupt or hostile length field would otherwise drive an
+// unbounded allocation. This is a backstop: call sites that know a tighter
+// bound should enforce it themselves and report a more specific error.
+const MaxReadSize = 1 << 30
+
 // ReadSlice reads a raw byte slice at the given offset.
 func ReadSlice(r io.ReaderAt, off int64, n int) ([]byte, error) {
 	if n < 0 {
 		return nil, fmt.Errorf("binaryutil: negative size: %d", n)
+	}
+	if n > MaxReadSize {
+		return nil, fmt.Errorf("binaryutil: read size %d exceeds maximum %d", n, MaxReadSize)
+	}
+	if off < 0 {
+		return nil, fmt.Errorf("binaryutil: negative offset: %d", off)
 	}
 	buf := make([]byte, n)
 	_, err := r.ReadAt(buf, off)
