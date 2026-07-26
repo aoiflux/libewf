@@ -34,6 +34,9 @@ project and is not a port of it; it is distributed under the MIT license.
 - `Verify` recomputes the acquisition digests over the decoded device
 - `io.ReaderAt`-compatible decoded stream for random-access reads, bounded by
   the logical device size and safe for concurrent use
+- Bounded LRU chunk cache, so small reads within a chunk do not repeat its
+  decompression
+- Encrypted images are detected and rejected rather than decoded as ciphertext
 
 ## Install
 
@@ -213,14 +216,67 @@ All errors are comparable with `errors.Is`:
 | `ErrInvalidOffset`        | Negative or unusable `ReadAt` offset                         |
 | `ErrMissingSegment`       | Gap in the supplied segment numbering                        |
 | `ErrIncompleteSegmentSet` | Trailing segments were not supplied                          |
-| `ErrEncrypted`            | Image is encrypted and no key was supplied                   |
-| `ErrChecksumMismatch`     | Stored checksum validation failed                            |
-| `ErrNoLogicalEvidence`    | Logical-evidence operation on a physical image               |
+| `ErrEncrypted`            | Image is encrypted; decryption is not supported              |
+| `ErrChecksumMismatch`     | Checksum validation failed under `ChecksumStrict`            |
 | `ErrNotImplemented`       | Intentionally absent API                                     |
+
+Every error above is returned by some code path. Sentinels for unimplemented
+features are deliberately absent: an exported error that can never occur invites
+a branch that never runs and reads as though the feature were handled.
 
 Failures that can be attributed to one segment of a set are wrapped in a
 `*SegmentError`, which records the segment number and its index in the slice
 passed to `OpenSegments`.
+
+### Options
+
+`OpenWithOptions` and `OpenSegmentsWithOptions` accept:
+
+| Option                            | Default | Effect                                                                 |
+| --------------------------------- | ------- | ---------------------------------------------------------------------- |
+| `WithChunkCache(n)`               | 16      | Decoded chunks kept cached. Negative disables caching                   |
+| `WithChecksumPolicy(p)`           | `ChecksumWarn` | Response to a chunk table that fails its checksum               |
+| `AllowIncompleteSegmentSet()`     | off     | Permit opening a partial segment set                                    |
+
+```go
+r, err := libewf.OpenSegmentsWithOptions(sources,
+    libewf.WithChunkCache(64),
+    libewf.WithChecksumPolicy(libewf.ChecksumStrict),
+)
+```
+
+Checksum policies:
+
+- `ChecksumWarn` (default) decodes the image and records failures in
+  `Metadata().ChunkTablesInvalid`. Damaged evidence still yields what is
+  readable, with the caller told it is unverified.
+- `ChecksumStrict` refuses to open an image in which any chunk table failed
+  validation and could not be recovered from its `table2` backup, returning
+  `ErrChecksumMismatch`.
+- `ChecksumIgnore` suppresses the accounting entirely.
+
+### Encryption
+
+Encrypted images are detected — via an encryption-keys section or a per-section
+encrypted flag — and `Open` fails with `ErrEncrypted`. Decryption is not
+implemented, and decoding the chunks anyway would hand back ciphertext presented
+as device content. There is no option to override this.
+
+### Performance
+
+A chunk is the smallest decodable unit of an EWF image, so without caching a
+caller reading 512 bytes at a time re-decompresses the whole enclosing 32 KiB
+chunk on every call. Filesystem parsers read exactly like that, so the cache is
+on by default. Measured with `go test ./reader/ -bench ReadAtCacheSize`:
+
+| Cache    | ns/op  | Throughput | Allocations |
+| -------- | ------ | ---------- | ----------- |
+| disabled | 78,397 | 6.5 MB/s   | 88/op       |
+| enabled  | ~700   | ~730 MB/s  | 1/op        |
+
+Streaming whole chunks sequentially gains nothing from the cache, since every
+read lands in a new chunk; the benefit is entirely in repeated or scattered
+reads within a chunk.
 
 ## Metadata Model
 
@@ -326,8 +382,8 @@ Known gaps, stated explicitly so they are not discovered at integration time:
   file signature is recognised and metadata parses, but the `ltree` and
   `single_files_data` sections are not decoded, so individual files cannot be
   listed or read yet.
-- **Encrypted images are not decrypted.** `Metadata().IsEncrypted` reports
-  detection only. Decryption of `.Ex01` is not implemented.
+- **Encrypted images cannot be read.** They are detected and rejected with
+  `ErrEncrypted` rather than decoded; decryption of `.Ex01` is not implemented.
 - **Acquisition metadata is not parsed.** The `header`, `header2` and `xheader`
   sections carry case number, examiner, acquisition date and imaging tool.
   They are listed in the section inventory but their contents are not decoded.
@@ -337,8 +393,8 @@ Known gaps, stated explicitly so they are not discovered at integration time:
 - **EWF v2 requires more than a bare `io.ReaderAt`.** Its section chain is
   walked from the end of the file, so the source must also provide `Size()`,
   `Len()` or `Stat()` — `os.File`, `bytes.Reader` and `io.SectionReader` all do.
-- **Chunks are decoded on every read.** There is no chunk cache yet, so small
-  sequential reads within one chunk repeat its decompression.
+- **Only chunk-table checksums are validated.** Section descriptors carry their
+  own Adler-32 values, which are read but not currently verified.
 
 ## Non-goals
 

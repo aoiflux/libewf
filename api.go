@@ -24,11 +24,9 @@ var (
 	ErrMissingSegment = ewferr.ErrMissingSegment
 	// ErrIncompleteSegmentSet indicates trailing segments were not supplied.
 	ErrIncompleteSegmentSet = ewferr.ErrIncompleteSegmentSet
-	// ErrChecksumMismatch indicates stored checksum validation failed.
+	// ErrChecksumMismatch indicates checksum validation failed under
+	// ChecksumStrict.
 	ErrChecksumMismatch = ewferr.ErrChecksumMismatch
-	// ErrNoLogicalEvidence indicates a logical-evidence operation was
-	// attempted on a physical image.
-	ErrNoLogicalEvidence = ewferr.ErrNoLogicalEvidence
 )
 
 // SegmentError identifies which segment in a set failed. See ewferr.SegmentError.
@@ -67,6 +65,46 @@ type Writer interface {
 
 // Option configures how an image is opened.
 type Option func(*reader.Options)
+
+// ChecksumPolicy selects what happens when stored checksum validation fails.
+type ChecksumPolicy = reader.ChecksumPolicy
+
+// Checksum policies. The default is ChecksumWarn.
+const (
+	// ChecksumWarn decodes the image anyway and reports failures in
+	// Metadata().ChunkTablesInvalid.
+	ChecksumWarn = reader.ChecksumWarn
+	// ChecksumIgnore suppresses checksum accounting entirely.
+	ChecksumIgnore = reader.ChecksumIgnore
+	// ChecksumStrict refuses to open an image with an unverifiable chunk table.
+	ChecksumStrict = reader.ChecksumStrict
+)
+
+// WithChecksumPolicy selects the response to a chunk table that fails its
+// stored Adler-32 checksum.
+//
+// The default, ChecksumWarn, decodes the image and records the failure, because
+// damaged evidence should still yield whatever is readable. Pass ChecksumStrict
+// when unverified chunk offsets are worse than no image at all; Open then fails
+// with ErrChecksumMismatch.
+func WithChecksumPolicy(p ChecksumPolicy) Option {
+	return func(o *reader.Options) { o.ChecksumPolicy = p }
+}
+
+// WithChunkCache sets how many decoded chunks the reader keeps cached.
+//
+// A chunk is the smallest decodable unit of an EWF image, so a caller reading
+// 512 bytes at a time would otherwise re-decompress the whole enclosing chunk
+// on every call. Filesystem parsers read exactly like that, which is why
+// caching is on by default.
+//
+// Pass a positive depth to override the default of 16, or a negative value to
+// disable caching when memory matters more than throughput. Memory use is the
+// depth multiplied by the image's chunk size, capped internally so an unusual
+// chunk size cannot turn a small depth into a large allocation.
+func WithChunkCache(chunks int) Option {
+	return func(o *reader.Options) { o.ChunkCacheChunks = chunks }
+}
 
 // AllowIncompleteSegmentSet permits opening a segment set that does not begin
 // at segment 1 or whose final segment carries no "done" section.

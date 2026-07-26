@@ -877,6 +877,105 @@ func TestOpenInvalidSignature(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Encryption
+// ---------------------------------------------------------------------------
+
+// TestEncryptedImageIsRejected covers the v2 encryption-keys section. Opening
+// such an image must fail: decryption is not implemented, and decoding anyway
+// would present ciphertext to the caller as device content.
+func TestEncryptedImageIsRejected(t *testing.T) {
+	image := make([]byte, 320)
+	copy(image[0:8], types.SignatureEVFv2[:])
+	image[8] = 2
+	binary.LittleEndian.PutUint32(image[12:16], 1)
+
+	writeV2SectionDescriptor(image, 256, types.SectionTypeDone, 64, 0)
+	writeV2SectionDescriptor(image, 192, types.SectionTypeEncryptionKeys, 192, 0)
+
+	_, err := OpenWithOptions(bytes.NewReader(image), Options{AllowIncompleteSegmentSet: true})
+	if !errors.Is(err, ewferr.ErrEncrypted) {
+		t.Fatalf("Open() error = %v, want ErrEncrypted", err)
+	}
+}
+
+// TestEncryptedSectionFlagIsRejected covers the other signal: a per-section
+// encrypted flag, with no encryption-keys section present.
+func TestEncryptedSectionFlagIsRejected(t *testing.T) {
+	image := make([]byte, 320)
+	copy(image[0:8], types.SignatureEVFv2[:])
+	image[8] = 2
+	binary.LittleEndian.PutUint32(image[12:16], 1)
+
+	writeV2SectionDescriptor(image, 256, types.SectionTypeDone, 64, 0)
+	writeV2SectionDescriptor(image, 192, types.SectionTypeSectorData, 192, types.SectionDataFlagEncrypted)
+
+	_, err := OpenWithOptions(bytes.NewReader(image), Options{AllowIncompleteSegmentSet: true})
+	if !errors.Is(err, ewferr.ErrEncrypted) {
+		t.Fatalf("Open() error = %v, want ErrEncrypted", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Checksum policy
+// ---------------------------------------------------------------------------
+
+func TestChecksumPolicy(t *testing.T) {
+	// A single table with a damaged entry array and no table2 to fall back to.
+	spec := defaultV1([]byte("AAAAAAAA"))
+	spec.withTable2 = false
+	spec.corruptPrimary = true
+	image := spec.build()
+
+	t.Run("warn decodes and records", func(t *testing.T) {
+		r, err := OpenWithOptions(bytes.NewReader(image), Options{ChecksumPolicy: ChecksumWarn})
+		if err != nil {
+			t.Fatalf("Open() error = %v, want success under ChecksumWarn", err)
+		}
+		if got := r.Metadata().ChunkTablesInvalid; got != 1 {
+			t.Errorf("ChunkTablesInvalid = %d, want 1", got)
+		}
+	})
+
+	t.Run("strict refuses", func(t *testing.T) {
+		_, err := OpenWithOptions(bytes.NewReader(image), Options{ChecksumPolicy: ChecksumStrict})
+		if !errors.Is(err, ewferr.ErrChecksumMismatch) {
+			t.Fatalf("Open() error = %v, want ErrChecksumMismatch", err)
+		}
+	})
+
+	t.Run("ignore suppresses accounting", func(t *testing.T) {
+		r, err := OpenWithOptions(bytes.NewReader(image), Options{ChecksumPolicy: ChecksumIgnore})
+		if err != nil {
+			t.Fatalf("Open() error = %v", err)
+		}
+		if got := r.Metadata().ChunkTablesInvalid; got != 0 {
+			t.Errorf("ChunkTablesInvalid = %d, want 0 under ChecksumIgnore", got)
+		}
+	})
+
+	t.Run("strict accepts a healthy image", func(t *testing.T) {
+		healthy := defaultV1([]byte("AAAAAAAA")).build()
+		if _, err := OpenWithOptions(bytes.NewReader(healthy), Options{ChecksumPolicy: ChecksumStrict}); err != nil {
+			t.Fatalf("Open() error = %v, want success for a valid image under ChecksumStrict", err)
+		}
+	})
+
+	t.Run("strict accepts a table2 recovery", func(t *testing.T) {
+		// The primary is damaged but the backup validates, so nothing is
+		// unverified and strict mode has no reason to refuse.
+		recoverable := defaultV1([]byte("AAAAAAAA"))
+		recoverable.corruptPrimary = true
+		r, err := OpenWithOptions(bytes.NewReader(recoverable.build()), Options{ChecksumPolicy: ChecksumStrict})
+		if err != nil {
+			t.Fatalf("Open() error = %v, want success when table2 recovers the group", err)
+		}
+		if got := r.Metadata().ChunkTablesRecovered; got != 1 {
+			t.Errorf("ChunkTablesRecovered = %d, want 1", got)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
 // Damaged input must never panic
 // ---------------------------------------------------------------------------
 

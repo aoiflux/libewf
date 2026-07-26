@@ -1,0 +1,143 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Nightly, to give fuzzing a longer run than a PR can afford.
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test with race detector
+        run: go test -race -count=1 ./...
+
+      # examples/offsets is a separate module, so a root `go test ./...` never
+      # compiles it. Without this step it would rot silently.
+      - name: Build nested examples module
+        working-directory: examples/offsets
+        run: |
+          go build ./...
+          go vet ./...
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-clean:"
+            echo "$unformatted"
+            gofmt -d $unformatted
+            exit 1
+          fi
+
+      - name: staticcheck
+        # Advisory: staticcheck often lags a new Go release, and a toolchain gap
+        # should not block a correctness-focused pipeline. Read the output.
+        continue-on-error: true
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          "$(go env GOPATH)/bin/staticcheck" ./...
+
+  corpus:
+    name: corpus (real acquisition tools)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # ewf-tools provides ewfacquire and ewfinfo. The corpus is what validates
+      # the reader against the format as real writers emit it; the synthetic
+      # tests only prove it matches our own model of the format.
+      - name: Install ewf-tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ewf-tools
+          ewfacquire -V | head -1
+          ewfinfo -V | head -1
+
+      - name: Generate corpus
+        run: go run ./tools/mkcorpus -out testdata/corpus -size 4
+
+      # TestCorpus skips when the corpus is empty, which would make this job
+      # pass while validating nothing. Fail loudly if generation produced none.
+      - name: Fail if the corpus is empty
+        run: |
+          if [ ! -f testdata/corpus/manifest.json ]; then
+            echo "no manifest was produced" >&2
+            exit 1
+          fi
+          entries="$(grep -c '"name"' testdata/corpus/manifest.json)"
+          echo "corpus entries: $entries"
+          if [ "$entries" -lt 10 ]; then
+            echo "expected at least 10 corpus entries, got $entries" >&2
+            exit 1
+          fi
+
+      - name: Validate against corpus
+        run: go test -count=1 -run TestCorpus -v .
+
+  fuzz:
+    name: fuzz
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Fuzz Open and ReadAt
+        run: |
+          go test ./reader/ -run FuzzOpenAndRead \
+            -fuzz FuzzOpenAndRead \
+            -fuzztime ${{ github.event_name == 'schedule' && '15m' || '90s' }}
+
+      # A crasher is written into testdata/fuzz; keep it so the failure can be
+      # reproduced locally instead of only existing in the runner's filesystem.
+      - name: Upload fuzz failures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashers
+          path: reader/testdata/fuzz/
+          if-no-files-found: ignore

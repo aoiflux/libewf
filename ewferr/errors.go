@@ -47,13 +47,16 @@ var (
 	// "done" section, so at least one trailing segment was not supplied.
 	ErrIncompleteSegmentSet = errors.New("libewf: incomplete segment set")
 
-	// ErrChecksumMismatch indicates stored checksum validation failed.
+	// ErrChecksumMismatch indicates stored checksum validation failed and the
+	// configured policy treats that as fatal.
 	ErrChecksumMismatch = errors.New("libewf: checksum mismatch")
-
-	// ErrNoLogicalEvidence indicates a logical-evidence operation was
-	// attempted on a physical (E01/Ex01) image.
-	ErrNoLogicalEvidence = errors.New("libewf: not a logical evidence image")
 )
+
+// Every value above is returned by some code path. Sentinels for features that
+// do not exist yet are deliberately absent: an exported error that can never
+// occur invites callers to write a branch that never runs, and reads as though
+// the feature were handled. They will be added along with the code that returns
+// them.
 
 // SegmentError identifies the segment in a multi-segment set that failed,
 // so callers can report which file on disk is at fault.

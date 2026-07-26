@@ -30,8 +30,28 @@ const (
 	SegmentFileTypeEWF2Logical
 )
 
+// ChecksumPolicy selects what happens when stored checksum validation fails.
+type ChecksumPolicy int
+
+const (
+	// ChecksumWarn decodes the image anyway and records the failure in
+	// Metadata().ChunkTablesInvalid. This is the default: damaged evidence
+	// should still yield whatever is readable, with the caller told that it
+	// is unverified.
+	ChecksumWarn ChecksumPolicy = iota
+
+	// ChecksumIgnore suppresses the accounting entirely.
+	ChecksumIgnore
+
+	// ChecksumStrict refuses to open an image in which any chunk table failed
+	// validation and could not be recovered from its backup copy. Use it when
+	// unverified offsets are worse than no image at all.
+	ChecksumStrict
+)
+
 // Options controls how a segment set is opened. The zero value is the default,
-// strict behaviour.
+// strict-but-forgiving behaviour: structural problems are errors, checksum
+// failures are recorded and reported.
 type Options struct {
 	// AllowIncompleteSegmentSet permits opening a segment set that does not
 	// begin at segment 1 or whose final segment carries no "done" section.
@@ -40,6 +60,23 @@ type Options struct {
 	// Use it for metadata inspection and for triage of damaged evidence;
 	// never for content that will be hashed or carved.
 	AllowIncompleteSegmentSet bool
+
+	// ChecksumPolicy selects the response to a chunk table that fails its
+	// stored Adler-32 checksum. It currently governs chunk tables only, which
+	// are the checksums this reader validates.
+	ChecksumPolicy ChecksumPolicy
+
+	// ChunkCacheChunks sets how many decoded chunks to keep cached.
+	//
+	// Zero selects a default of 16; a negative value disables caching. Memory
+	// use is the depth multiplied by the image's chunk size, capped internally
+	// so that an unusual chunk size cannot turn a small depth into a large
+	// allocation.
+	//
+	// Caching matters because a chunk is the smallest decodable unit: without
+	// it, a caller reading 512 bytes at a time re-decompresses the whole
+	// enclosing chunk on every call.
+	ChunkCacheChunks int
 }
 
 // ImageReader presents a segment set as one contiguous decoded device.
@@ -59,6 +96,9 @@ type ImageReader struct {
 	// logicalSize is the size of the decoded device in bytes. No byte at or
 	// beyond this offset is ever returned by ReadAt.
 	logicalSize int64
+
+	// cache holds recently decoded chunks. It is nil when caching is disabled.
+	cache *chunkCache
 }
 
 // FileHeaderInfo contains parsed file-header fields needed for subsequent parsing.
@@ -126,6 +166,25 @@ func OpenSegmentsWithOptions(sources []io.ReaderAt, opts Options) (*ImageReader,
 	}
 	mergedMeta := mergeSegmentMetadata(segments, mergedChunks)
 
+	// Refuse encrypted images before any of their data can be interpreted.
+	// Decryption is not implemented, and decoding the chunks anyway would hand
+	// the caller ciphertext presented as device content.
+	if mergedMeta.IsEncrypted {
+		return nil, fmt.Errorf("reader: image is encrypted and decryption is not supported: %w",
+			ewferr.ErrEncrypted)
+	}
+
+	switch opts.ChecksumPolicy {
+	case ChecksumStrict:
+		if mergedMeta.ChunkTablesInvalid > 0 {
+			return nil, fmt.Errorf("reader: %d chunk table(s) failed checksum validation with no usable backup copy: %w",
+				mergedMeta.ChunkTablesInvalid, ewferr.ErrChecksumMismatch)
+		}
+	case ChecksumIgnore:
+		mergedMeta.ChunkTablesInvalid = 0
+		mergedMeta.ChunkTablesRecovered = 0
+	}
+
 	chunkSize, logicalSize, err := computeGeometry(mergedMeta.Media)
 	if err != nil {
 		return nil, err
@@ -140,6 +199,7 @@ func OpenSegmentsWithOptions(sources []io.ReaderAt, opts Options) (*ImageReader,
 		chunkTable:      mergedChunks,
 		chunkSize:       chunkSize,
 		logicalSize:     logicalSize,
+		cache:           newChunkCache(effectiveCacheChunks(opts.ChunkCacheChunks, chunkSize)),
 	}, nil
 }
 
@@ -288,8 +348,30 @@ func (r *ImageReader) ReadAt(p []byte, off int64) (int, error) {
 	return totalRead, nil
 }
 
-// chunkData returns the decoded bytes of one stored chunk.
+// chunkData returns the decoded bytes of one stored chunk, from the cache when
+// possible.
+//
+// The returned slice is shared with the cache and with concurrent callers, so
+// it must not be modified. ReadAt only copies out of it.
 func (r *ImageReader) chunkData(chunkNum int) ([]byte, error) {
+	if data, ok := r.cache.get(chunkNum); ok {
+		return data, nil
+	}
+
+	// Decode outside the cache lock: decompression is the expensive part, and
+	// holding the lock across it would serialise concurrent readers. Two
+	// goroutines racing on the same chunk both decode it and both store the
+	// result, which wastes a little work but is otherwise harmless.
+	data, err := r.decodeChunk(chunkNum)
+	if err != nil {
+		return nil, err
+	}
+	r.cache.put(chunkNum, data)
+	return data, nil
+}
+
+// decodeChunk reads and decompresses one stored chunk, bypassing the cache.
+func (r *ImageReader) decodeChunk(chunkNum int) ([]byte, error) {
 	desc := r.chunkTable[chunkNum]
 	readSource := desc.dataSource
 	if readSource == nil {

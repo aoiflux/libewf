@@ -47,4 +47,10 @@ func applySectionSummary(info *metadata.Info, section SectionInfo) {
 	if (section.DataFlags & types.SectionDataFlagHasIntegrityHash) != 0 {
 		info.HasIntegrityHashBlocks = true
 	}
+	// Encryption is signalled two ways: a dedicated key section, and a
+	// per-section flag. Missing the flag would let an encrypted image look
+	// decodable and hand ciphertext back as device data.
+	if (section.DataFlags & types.SectionDataFlagEncrypted) != 0 {
+		info.IsEncrypted = true
+	}
 }
