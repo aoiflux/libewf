@@ -12,8 +12,8 @@ import (
 const (
 	ewfVolumeSize      = 1052 // sizeof(ewf_volume_t)       — EWF-E01/L01
 	ewfVolumeSmartSize = 94   // sizeof(ewf_volume_smart_t) — EWF-S01
-	ewfHashSize        = 36 // sizeof(ewf_hash_t)   — v1 "hash" section
-	ewfDigestSize      = 80 // sizeof(ewf_digest_t) — v1 "digest" section
+	ewfHashSize        = 36   // sizeof(ewf_hash_t)   — v1 "hash" section
+	ewfDigestSize      = 80   // sizeof(ewf_digest_t) — v1 "digest" section
 
 	// Digest lengths, not section sizes. The EWF2 md5_hash and sha1_hash
 	// sections are 32 bytes on disk, but the trailing padding is reported

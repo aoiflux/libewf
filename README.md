@@ -17,14 +17,15 @@ project and is not a port of it; it is distributed under the MIT license.
   - EWF v1 (EVF) — `.E01` physical images
   - EWF v2 (EVF2) — `.Ex01` physical images, including pattern-fill chunks
   - EWF v1 Logical (LVF) `.L01` and EWF v2 Logical (LEF2) `.Lx01` — **detected
-    only**; per-file enumeration is not implemented yet (see [Limitations](#limitations))
+    only**; per-file enumeration is not implemented yet (see
+    [Limitations](#limitations))
 - Multi-segment image support (`OpenSegments`), with completeness validation
 - Chunk decompression:
   - None (method 0)
   - Deflate / zlib (method 1)
   - bzip2 (method 2)
-- Chunk tables validated against their stored Adler-32 checksums, with
-  automatic recovery from the `table2` backup copy
+- Chunk tables validated against their stored Adler-32 checksums, with automatic
+  recovery from the `table2` backup copy
 - Rich image metadata:
   - Version, segment number, section inventory
   - Media geometry (chunks, sectors per chunk, bytes per sector, total sectors)
@@ -115,13 +116,13 @@ defer r.Close()
 
 ### Open functions
 
-| Function                                                                    | Description                                                                          |
-| --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `Open(source io.ReaderAt) (Reader, error)`                                  | Open a single-segment EWF image                                                      |
-| `OpenSegments(sources []io.ReaderAt) (Reader, error)`                       | Open a multi-segment EWF image; segments may be supplied in any order                |
-| `OpenWithOptions(source io.ReaderAt, opts ...Option) (Reader, error)`       | As `Open`, with options                                                              |
-| `OpenSegmentsWithOptions(sources []io.ReaderAt, opts ...Option) (Reader, error)` | As `OpenSegments`, with options                                                 |
-| `Create(w io.Writer) (Writer, error)`                                       | Always returns `ErrNotImplemented`; see [Non-goals](#non-goals)                      |
+| Function                                                                         | Description                                                           |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `Open(source io.ReaderAt) (Reader, error)`                                       | Open a single-segment EWF image                                       |
+| `OpenSegments(sources []io.ReaderAt) (Reader, error)`                            | Open a multi-segment EWF image; segments may be supplied in any order |
+| `OpenWithOptions(source io.ReaderAt, opts ...Option) (Reader, error)`            | As `Open`, with options                                               |
+| `OpenSegmentsWithOptions(sources []io.ReaderAt, opts ...Option) (Reader, error)` | As `OpenSegments`, with options                                       |
+| `Create(w io.Writer) (Writer, error)`                                            | Always returns `ErrNotImplemented`; see [Non-goals](#non-goals)       |
 
 ### Reader interface
 
@@ -150,9 +151,9 @@ them.
 
 ### Segment set completeness
 
-A multi-segment set must be complete. A gap in the segment numbering, or a
-final segment that does not terminate with a `done` section, is an error —
-decoding a partial set would otherwise present a silently truncated device:
+A multi-segment set must be complete. A gap in the segment numbering, or a final
+segment that does not terminate with a `done` section, is an error — decoding a
+partial set would otherwise present a silently truncated device:
 
 ```go
 r, err := libewf.OpenSegments(sources)
@@ -207,9 +208,9 @@ digests at all, because there is then nothing to verify against.
 
 ### Acquisition provenance
 
-`Metadata().Acquisition` carries what the imaging tool recorded: who acquired the
-evidence, from what, when, and with which tool. It is nil when the image has no
-header section this library can decode.
+`Metadata().Acquisition` carries what the imaging tool recorded: who acquired
+the evidence, from what, when, and with which tool. It is nil when the image has
+no header section this library can decode.
 
 ```go
 if a := r.Metadata().Acquisition; a != nil {
@@ -223,8 +224,8 @@ encodings — `header` (8-bit, tab-delimited), `header2` (UTF-16LE) and `xheader
 (XML) — and most images carry more than one. `header2` wins where present, since
 it cannot mangle non-ASCII case notes and stores dates as unambiguous POSIX
 timestamps; lower-precedence sections still fill fields it left empty.
-`Acquisition.Source` names the section that won, and `Acquisition.Values` exposes
-every raw identifier/value pair including ones with no dedicated field.
+`Acquisition.Source` names the section that won, and `Acquisition.Values`
+exposes every raw identifier/value pair including ones with no dedicated field.
 
 EWF v2 replaces those with `case_data` and `device_information`, which between
 them carry both the provenance and the media geometry. Both contribute to one
@@ -240,16 +241,16 @@ preserve the stored text for anything that must round-trip exactly.
 
 All errors are comparable with `errors.Is`:
 
-| Error                     | Meaning                                                     |
-| ------------------------- | ----------------------------------------------------------- |
-| `ErrUnsupportedFormat`    | Not a recognised EWF segment                                 |
-| `ErrCorruptImage`         | Structural damage that prevents decoding                     |
-| `ErrInvalidOffset`        | Negative or unusable `ReadAt` offset                         |
-| `ErrMissingSegment`       | Gap in the supplied segment numbering                        |
-| `ErrIncompleteSegmentSet` | Trailing segments were not supplied                          |
-| `ErrEncrypted`            | Image is encrypted; decryption is not supported              |
-| `ErrChecksumMismatch`     | Checksum validation failed under `ChecksumStrict`            |
-| `ErrNotImplemented`       | Intentionally absent API                                     |
+| Error                     | Meaning                                           |
+| ------------------------- | ------------------------------------------------- |
+| `ErrUnsupportedFormat`    | Not a recognised EWF segment                      |
+| `ErrCorruptImage`         | Structural damage that prevents decoding          |
+| `ErrInvalidOffset`        | Negative or unusable `ReadAt` offset              |
+| `ErrMissingSegment`       | Gap in the supplied segment numbering             |
+| `ErrIncompleteSegmentSet` | Trailing segments were not supplied               |
+| `ErrEncrypted`            | Image is encrypted; decryption is not supported   |
+| `ErrChecksumMismatch`     | Checksum validation failed under `ChecksumStrict` |
+| `ErrNotImplemented`       | Intentionally absent API                          |
 
 Every error above is returned by some code path. Sentinels for unimplemented
 features are deliberately absent: an exported error that can never occur invites
@@ -263,11 +264,11 @@ passed to `OpenSegments`.
 
 `OpenWithOptions` and `OpenSegmentsWithOptions` accept:
 
-| Option                            | Default | Effect                                                                 |
-| --------------------------------- | ------- | ---------------------------------------------------------------------- |
-| `WithChunkCache(n)`               | 16      | Decoded chunks kept cached. Negative disables caching                   |
-| `WithChecksumPolicy(p)`           | `ChecksumWarn` | Response to a chunk table that fails its checksum               |
-| `AllowIncompleteSegmentSet()`     | off     | Permit opening a partial segment set                                    |
+| Option                        | Default        | Effect                                                |
+| ----------------------------- | -------------- | ----------------------------------------------------- |
+| `WithChunkCache(n)`           | 16             | Decoded chunks kept cached. Negative disables caching |
+| `WithChecksumPolicy(p)`       | `ChecksumWarn` | Response to a chunk table that fails its checksum     |
+| `AllowIncompleteSegmentSet()` | off            | Permit opening a partial segment set                  |
 
 ```go
 r, err := libewf.OpenSegmentsWithOptions(sources,
@@ -313,25 +314,25 @@ reads within a chunk.
 
 `metadata.Info` is returned by `Reader.Metadata()` after opening a segment.
 
-| Field                               | Type                 | Description                                       |
-| ----------------------------------- | -------------------- | ------------------------------------------------- |
-| `MajorVersion` / `MinorVersion`     | `uint8`              | EWF format version                                |
-| `SegmentNumber`                     | `uint32`             | Segment index in the set                          |
-| `SectionCount`                      | `int`                | Total number of sections parsed                   |
-| `HasNextSection` / `HasDoneSection` | `bool`               | Segment chain flags                               |
-| `IsEncrypted`                       | `bool`               | Whether the image is encrypted                    |
-| `HasIntegrityHashBlocks`            | `bool`               | Whether hash blocks are present                   |
-| `SectionTypeCounts`                 | `map[uint32]int`     | Count of each section type code                   |
-| `Sections`                          | `[]Section`          | Ordered section descriptor list                   |
-| `Media`                             | `*MediaInfo`         | Media geometry and acquisition parameters         |
-| `HasMD5Digest` / `MD5Digest`        | `bool` / `[16]byte`  | MD5 integrity digest                              |
-| `HasSHA1Digest` / `SHA1Digest`      | `bool` / `[20]byte`  | SHA1 integrity digest                             |
-| `Sessions`                          | `[]SessionEntry`     | Session table entries                             |
-| `AcquisitionErrors`                 | `[]AcquisitionError` | Sectors that could not be read during acquisition |
-| `Acquisition`                       | `*Acquisition`       | Provenance recorded at imaging time, or nil       |
+| Field                               | Type                 | Description                                        |
+| ----------------------------------- | -------------------- | -------------------------------------------------- |
+| `MajorVersion` / `MinorVersion`     | `uint8`              | EWF format version                                 |
+| `SegmentNumber`                     | `uint32`             | Segment index in the set                           |
+| `SectionCount`                      | `int`                | Total number of sections parsed                    |
+| `HasNextSection` / `HasDoneSection` | `bool`               | Segment chain flags                                |
+| `IsEncrypted`                       | `bool`               | Whether the image is encrypted                     |
+| `HasIntegrityHashBlocks`            | `bool`               | Whether hash blocks are present                    |
+| `SectionTypeCounts`                 | `map[uint32]int`     | Count of each section type code                    |
+| `Sections`                          | `[]Section`          | Ordered section descriptor list                    |
+| `Media`                             | `*MediaInfo`         | Media geometry and acquisition parameters          |
+| `HasMD5Digest` / `MD5Digest`        | `bool` / `[16]byte`  | MD5 integrity digest                               |
+| `HasSHA1Digest` / `SHA1Digest`      | `bool` / `[20]byte`  | SHA1 integrity digest                              |
+| `Sessions`                          | `[]SessionEntry`     | Session table entries                              |
+| `AcquisitionErrors`                 | `[]AcquisitionError` | Sectors that could not be read during acquisition  |
+| `Acquisition`                       | `*Acquisition`       | Provenance recorded at imaging time, or nil        |
 | `ObservedChunkCount`                | `uint64`             | Chunks actually decoded from the supplied segments |
-| `ChunkTablesRecovered`              | `int`                | Chunk tables read from their `table2` backup      |
-| `ChunkTablesInvalid`                | `int`                | Chunk tables where no copy passed its checksum    |
+| `ChunkTablesRecovered`              | `int`                | Chunk tables read from their `table2` backup       |
+| `ChunkTablesInvalid`                | `int`                | Chunk tables where no copy passed its checksum     |
 
 `Media.NumberOfChunks` is the count **declared** by the volume section.
 `ObservedChunkCount` is the count actually **decoded**. They differ when

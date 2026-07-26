@@ -1,0 +1,25 @@
+# Normalise line endings in the repository.
+* text=auto
+
+# Keep Go sources as LF in the working tree, on every platform.
+#
+# gofmt always emits LF. On a Windows checkout with core.autocrlf=true, every
+# .go file lands as CRLF, so `gofmt -l .` lists the entire tree and stops being
+# a usable signal — a real formatting problem hides among dozens of false ones.
+# That is exactly how a misaligned const block reached CI. Pinning eol=lf keeps
+# the local check meaningful and matching what CI runs.
+*.go text eol=lf
+
+# Same reasoning for the files that carry formatting rules of their own.
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.sh text eol=lf
+
+# Corpus images are binary; never transform them.
+*.E01 binary
+*.Ex01 binary
+*.L01 binary
+*.Lx01 binary
+*.s01 binary
+*.raw binary
