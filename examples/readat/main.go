@@ -11,18 +11,13 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("usage: go run ./examples/readat <segment.E01>")
+		fmt.Println("usage: go run ./examples/readat <image.E01>")
 		os.Exit(1)
 	}
 
-	f, err := os.Open(os.Args[1])
-	if err != nil {
-		fmt.Println("open file error:", err)
-		os.Exit(1)
-	}
-	defer f.Close()
-
-	r, err := libewf.Open(f)
+	// OpenPath decodes a multi-segment set from its first segment, so this
+	// reads the same way whether the image is one file or twenty.
+	r, err := libewf.OpenPath(os.Args[1])
 	if err != nil {
 		fmt.Println("libewf open error:", err)
 		os.Exit(1)

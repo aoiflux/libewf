@@ -14,7 +14,8 @@ import (
 	libtable "github.com/aoiflux/libtable"
 )
 
-const usage = "usage: offsets [-pt-offset N] [-verbose-detect] [-dump-sectors N] <segment1.E01> [segment2.E02 ...]"
+const usage = "usage: offsets [-pt-offset N] [-verbose-detect] [-dump-sectors N] <image.E01> [segment2.E02 ...]\n" +
+	"       one path is enough: the rest of the segment set is discovered"
 
 // args holds parsed command-line arguments.
 type args struct {
@@ -34,7 +35,13 @@ type detectAttempt struct {
 func main() {
 	a := parseArgs()
 
-	sources, closeAll, err := openFiles(a.segments)
+	segments, err := resolveSegments(a.segments)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "segment set error:", err)
+		os.Exit(1)
+	}
+
+	sources, closeAll, err := openFiles(segments)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "open error:", err)
 		os.Exit(1)
@@ -49,7 +56,7 @@ func main() {
 	defer r.Close()
 
 	meta := r.Metadata()
-	printImageReport(meta, a.segments, a.ptOffset)
+	printImageReport(meta, segments, a.ptOffset)
 
 	if a.dumpSectors > 0 {
 		dumpStreamSectors(r, a.dumpSectors)
@@ -89,6 +96,17 @@ func parseArgs() args {
 }
 
 // --- I/O helpers ---
+
+// resolveSegments expands a single path into the whole segment set, so that the
+// report names every file the image was decoded from rather than only the one
+// that was typed. Several paths are taken as given, for a set whose files do
+// not follow the EWF naming progression.
+func resolveSegments(paths []string) ([]string, error) {
+	if len(paths) != 1 {
+		return paths, nil
+	}
+	return libewf.SegmentPaths(paths[0])
+}
 
 func openFiles(paths []string) ([]io.ReaderAt, func(), error) {
 	files := make([]*os.File, 0, len(paths))

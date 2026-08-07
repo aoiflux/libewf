@@ -32,13 +32,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	libewf "github.com/aoiflux/libewf"
 	"github.com/aoiflux/libewf/internal/corpus"
+	"github.com/aoiflux/libewf/internal/segname"
 )
 
 func main() {
@@ -147,7 +147,11 @@ func run(outDir, adoptList string, sizeMiB int, keepRaw, skipGenerate bool) erro
 // the corpus directory. The expected values come from the acquisition digests
 // embedded by the imaging tool, never from this library's decode.
 func adoptImage(outDir, firstSegment string) (corpus.Entry, error) {
-	segments, err := siblingSegments(firstSegment)
+	// The library's own discovery decides what belongs to the set, so a corpus
+	// entry can never disagree with the code it exists to test. It also refuses
+	// a set with a hole in it, which would otherwise be adopted as though it
+	// were whole.
+	segments, err := libewf.SegmentPaths(firstSegment)
 	if err != nil {
 		return corpus.Entry{}, err
 	}
@@ -155,6 +159,9 @@ func adoptImage(outDir, firstSegment string) (corpus.Entry, error) {
 	base := strings.TrimSuffix(filepath.Base(firstSegment), filepath.Ext(firstSegment))
 	name := sanitise(base)
 
+	// The copies are opened explicitly rather than rediscovered by path: the
+	// corpus directory may already hold segments left by an earlier adoption of
+	// the same name, and an entry must describe the files it just wrote.
 	sources := make([]io.ReaderAt, 0, len(segments))
 	copied := make([]string, 0, len(segments))
 	for _, src := range segments {
@@ -202,40 +209,6 @@ func adoptImage(outDir, firstSegment string) (corpus.Entry, error) {
 			"independent to verify against; acquire a raw source instead")
 	}
 	return entry, nil
-}
-
-// siblingSegments expands .E01 into .E01, .E02, ... following the EWF naming
-// progression, stopping at the first gap.
-func siblingSegments(first string) ([]string, error) {
-	if _, err := os.Stat(first); err != nil {
-		return nil, err
-	}
-	ext := filepath.Ext(first)
-	if len(ext) != 4 {
-		return []string{first}, nil
-	}
-	stem := strings.TrimSuffix(first, ext)
-	prefix := ext[:2] // ".E", ".L", ".s"
-
-	segments := []string{first}
-	for n := 2; ; n++ {
-		candidate := stem + segmentSuffix(prefix, n)
-		if _, err := os.Stat(candidate); err != nil {
-			break
-		}
-		segments = append(segments, candidate)
-	}
-	return segments, nil
-}
-
-// segmentSuffix produces the EWF extension for segment n: E02..E99, then
-// EAA..EZZ, matching the progression acquisition tools use.
-func segmentSuffix(prefix string, n int) string {
-	if n <= 99 {
-		return fmt.Sprintf("%s%02d", prefix, n)
-	}
-	n -= 100
-	return fmt.Sprintf("%s%c%c", prefix, 'A'+byte(n/26), 'A'+byte(n%26))
 }
 
 // ---------------------------------------------------------------------------
@@ -552,7 +525,7 @@ func runEwfacquire(outDir, rawDir, rawPath string, v variant) ([]string, digestI
 	if len(produced) == 0 {
 		return nil, digestInfo{}, errors.New("ewfacquire reported success but produced no segment files")
 	}
-	sort.Strings(produced)
+	sortSegments(produced)
 
 	// libewf before roughly 20240506 accepts -f encase7-v2 and then reports
 	// "Unsupported EWF format defaulting to: encase6", writing a .E01. Treat a
@@ -662,12 +635,35 @@ func parseEwfinfoDate(value string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// segmentExt matches EWF segment extensions: .E01..E99 and .EAA..EZZ, plus the
-// logical (.L01), SMART (.s01) and EWF2 (.Ex01) spellings.
-var segmentExt = regexp.MustCompile(`(?i)^\.(e|l|s)x?([0-9]{2}|[a-z]{2})$`)
-
+// isSegmentFile reports whether a path carries an EWF segment extension:
+// .E01..E99 and .EAA..EZZ, plus the logical (.L01), SMART (.s01) and EWF2
+// (.Ex01) spellings.
+//
+// It defers to the same naming rules the library uses, so a file this tool
+// records as a segment is one the reader will later look for.
 func isSegmentFile(path string) bool {
-	return segmentExt.MatchString(filepath.Ext(path))
+	_, _, ok := segname.ParseFamily(filepath.Ext(path))
+	return ok
+}
+
+// sortSegments orders segment paths by segment number rather than by name.
+// Sorting by name is close enough for a handful of segments and then quietly
+// stops being right: past .E99 the progression continues .EAA, and a set
+// written in mixed case misorders long before that.
+func sortSegments(paths []string) {
+	family, _, ok := segname.ParseFamily(filepath.Ext(paths[0]))
+	if !ok {
+		sort.Strings(paths)
+		return
+	}
+	sort.Slice(paths, func(i, j int) bool {
+		left, leftOK := family.Number(filepath.Ext(paths[i]))
+		right, rightOK := family.Number(filepath.Ext(paths[j]))
+		if !leftOK || !rightOK {
+			return paths[i] < paths[j]
+		}
+		return left < right
+	})
 }
 
 // parseAcquireLog extracts the digests ewfacquire computed over the source.

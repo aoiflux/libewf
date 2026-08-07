@@ -413,10 +413,13 @@ checksum verification; data decoded through them should be treated as suspect.
 
 ## Included Example Programs
 
+Each takes one path and discovers the rest of the segment set; several paths are
+still accepted, for a set whose files do not follow the EWF naming progression.
+
 ### 1) Print image metadata
 
 ```
-go run ./examples/open <segment1.E01> [segment2.E02 ...]
+go run ./examples/open <image.E01> [segment2.E02 ...]
 ```
 
 Prints version, segment number, section count, and media geometry.
@@ -424,7 +427,7 @@ Prints version, segment number, section count, and media geometry.
 ### 2) Hex dump first bytes of decoded stream
 
 ```
-go run ./examples/readat <segment.E01>
+go run ./examples/readat <image.E01>
 ```
 
 Reads 64 bytes at offset 0 from the decoded logical stream and hex-dumps them.
@@ -432,7 +435,7 @@ Reads 64 bytes at offset 0 from the decoded logical stream and hex-dumps them.
 ### 3) Partition table and filesystem detection
 
 ```
-go run ./examples/offsets [flags] <segment1.E01> [segment2.E02 ...]
+go run ./examples/offsets [flags] <image.E01> [segment2.E02 ...]
 ```
 
 Uses [libtable](https://github.com/aoiflux/libtable) to auto-detect the

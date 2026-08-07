@@ -11,36 +11,12 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("usage: go run ./examples/open <segment1.E01> [segment2.E02 ...]")
+		fmt.Println("usage: go run ./examples/open <image.E01> [segment2.E02 ...]")
+		fmt.Println("       one path is enough: the rest of the segment set is discovered")
 		os.Exit(1)
 	}
 
-	files := make([]*os.File, 0, len(os.Args)-1)
-	sources := make([]io.ReaderAt, 0, len(os.Args)-1)
-	for _, path := range os.Args[1:] {
-		f, err := os.Open(path)
-		if err != nil {
-			fmt.Println("open file error:", err)
-			os.Exit(1)
-		}
-		files = append(files, f)
-		sources = append(sources, f)
-	}
-	defer func() {
-		for _, f := range files {
-			_ = f.Close()
-		}
-	}()
-
-	var (
-		r   libewf.Reader
-		err error
-	)
-	if len(sources) == 1 {
-		r, err = libewf.Open(sources[0])
-	} else {
-		r, err = libewf.OpenSegments(sources)
-	}
+	r, err := open(os.Args[1:])
 	if err != nil {
 		fmt.Println("libewf open error:", err)
 		os.Exit(1)
@@ -90,4 +66,25 @@ func main() {
 	if len(m.AcquisitionErrors) > 0 {
 		fmt.Printf("warning: %d sector range(s) were unreadable at acquisition time\n", len(m.AcquisitionErrors))
 	}
+}
+
+// open takes the path form when it can, because OpenPath finds the rest of the
+// segment set itself and closes what it opened. Several paths are still
+// accepted, for a set whose files do not follow the EWF naming progression.
+func open(paths []string) (libewf.Reader, error) {
+	if len(paths) == 1 {
+		return libewf.OpenPath(paths[0])
+	}
+
+	sources := make([]io.ReaderAt, 0, len(paths))
+	for _, path := range paths {
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		// The files outlive this function and are released when the process
+		// exits, which for an example is honest enough.
+		sources = append(sources, f)
+	}
+	return libewf.OpenSegments(sources)
 }
