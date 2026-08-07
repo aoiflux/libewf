@@ -20,6 +20,8 @@ project and is not a port of it; it is distributed under the MIT license.
     only**; per-file enumeration is not implemented yet (see
     [Limitations](#limitations))
 - Multi-segment image support (`OpenSegments`), with completeness validation
+- Segment sets discovered from one path (`OpenPath`), following the EWF naming
+  progression — `.E01`…`.E99`, then `.EAA`…
 - Chunk decompression:
   - None (method 0)
   - Deflate / zlib (method 1)
@@ -46,6 +48,23 @@ go get github.com/aoiflux/libewf
 ```
 
 ## Quick Start
+
+### From a path
+
+`OpenPath` finds the rest of the segment set itself, which is what most callers
+want:
+
+```go
+r, err := libewf.OpenPath("/evidence/case1.E01")
+if err != nil {
+	panic(err)
+}
+defer r.Close()   // this Reader owns the files it opened, and closes them
+```
+
+The path may name any numbered member of the set — the set is enumerated from
+segment 1 either way — and a path whose extension names no EWF family is opened
+as a single file.
 
 ### Single segment
 
@@ -112,17 +131,29 @@ if err != nil {
 defer r.Close()
 ```
 
+Enumerating segments by hand is only necessary when they do not come from a
+local filesystem, or when the caller needs the handles for something else.
+`SegmentPaths` returns the same ordering without opening anything, for reports
+that must record which files an image was decoded from.
+
 ## API
 
 ### Open functions
 
 | Function                                                                         | Description                                                           |
 | -------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `OpenPath(path string) (Reader, error)`                                          | Open an image from one segment path, discovering the rest of the set  |
+| `OpenPathWithOptions(path string, opts ...Option) (Reader, error)`               | As `OpenPath`, with options                                           |
+| `SegmentPaths(path string) ([]string, error)`                                    | The set's paths in segment order, without opening them                |
 | `Open(source io.ReaderAt) (Reader, error)`                                       | Open a single-segment EWF image                                       |
 | `OpenSegments(sources []io.ReaderAt) (Reader, error)`                            | Open a multi-segment EWF image; segments may be supplied in any order |
 | `OpenWithOptions(source io.ReaderAt, opts ...Option) (Reader, error)`            | As `Open`, with options                                               |
 | `OpenSegmentsWithOptions(sources []io.ReaderAt, opts ...Option) (Reader, error)` | As `OpenSegments`, with options                                       |
 | `Create(w io.Writer) (Writer, error)`                                            | Always returns `ErrNotImplemented`; see [Non-goals](#non-goals)       |
+
+`OpenPath` is the one constructor whose `Reader` owns its sources: it opened the
+files, so its `Close` closes them. Every other constructor leaves the caller's
+`io.ReaderAt`s to the caller.
 
 ### Reader interface
 
@@ -147,7 +178,8 @@ returns a non-nil error whenever `n < len(p)`, and is safe for concurrent use
 provided the underlying `io.ReaderAt` sources are.
 
 `Close` does not close the underlying sources; the caller retains ownership of
-them.
+them. The exception is a `Reader` from `OpenPath`, which opened its own files
+and therefore closes them.
 
 ### Segment set completeness
 
@@ -164,6 +196,25 @@ case errors.Is(err, libewf.ErrIncompleteSegmentSet):
     // trailing segment files were not supplied
 }
 ```
+
+`OpenPath` splits the same two cases by where they can be detected. A hole in
+the numbering is visible in the directory, and fails before anything is read
+with a `*MissingSegmentsError` naming the files that were not found. A set that
+simply stops early is not — nothing on disk records how many segments the
+acquisition wrote — so it is caught when the segments are read, as
+`ErrIncompleteSegmentSet`:
+
+```go
+_, err := libewf.OpenPath("/evidence/case1.E01")
+
+var missing *libewf.MissingSegmentsError
+if errors.As(err, &missing) {
+    fmt.Println(missing.Expected) // [case1.E02 case1.E03]
+}
+```
+
+`*MissingSegmentsError` unwraps to `ErrMissingSegment`, so existing
+`errors.Is` checks keep working.
 
 To inspect an incomplete set anyway — for metadata, or triage of damaged
 evidence — opt in explicitly. `Size()` still reports the full declared device,
@@ -258,11 +309,15 @@ a branch that never runs and reads as though the feature were handled.
 
 Failures that can be attributed to one segment of a set are wrapped in a
 `*SegmentError`, which records the segment number and its index in the slice
-passed to `OpenSegments`.
+passed to `OpenSegments` — or, for `OpenPath`, in the discovered set.
+
+A gap found on disk by `OpenPath` is reported as a `*MissingSegmentsError`,
+which lists the absent segment numbers and the names they would carry, and
+unwraps to `ErrMissingSegment`.
 
 ### Options
 
-`OpenWithOptions` and `OpenSegmentsWithOptions` accept:
+`OpenWithOptions`, `OpenSegmentsWithOptions` and `OpenPathWithOptions` accept:
 
 | Option                        | Default        | Effect                                                |
 | ----------------------------- | -------------- | ----------------------------------------------------- |

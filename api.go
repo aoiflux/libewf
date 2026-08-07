@@ -32,6 +32,11 @@ var (
 // SegmentError identifies which segment in a set failed. See ewferr.SegmentError.
 type SegmentError = ewferr.SegmentError
 
+// MissingSegmentsError lists the segment numbers absent from a set discovered
+// by OpenPath, and the files they would be named. See
+// ewferr.MissingSegmentsError.
+type MissingSegmentsError = ewferr.MissingSegmentsError
+
 // Reader exposes read operations over an EWF image presented as one
 // contiguous decoded device.
 //
@@ -51,6 +56,9 @@ type Reader interface {
 
 	// Close releases resources held by the reader. The caller retains
 	// ownership of the io.ReaderAt sources and must close them separately.
+	//
+	// A Reader from OpenPath is the exception: it opened its own files, so
+	// its Close closes them too.
 	Close() error
 }
 
@@ -128,7 +136,8 @@ func buildOptions(opts []Option) reader.Options {
 // Open prepares an EWF reader from a random-access source.
 //
 // The source must be a complete single-segment image. To open a multi-segment
-// set, pass every segment to OpenSegments.
+// set, pass every segment to OpenSegments, or its first file to OpenPath and
+// let the rest be discovered.
 func Open(source io.ReaderAt) (Reader, error) {
 	return reader.Open(source)
 }

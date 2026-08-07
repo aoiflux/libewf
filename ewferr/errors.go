@@ -14,6 +14,8 @@ package ewferr
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 )
 
 var (
@@ -80,3 +82,65 @@ func (e *SegmentError) Error() string {
 }
 
 func (e *SegmentError) Unwrap() error { return e.Err }
+
+// maxListedSegments bounds how many segment numbers or names an error message
+// spells out. A set missing three segments should say which three; a set
+// missing six hundred should still produce an error a human can read.
+const maxListedSegments = 10
+
+// MissingSegmentsError reports the segment numbers absent from a set that was
+// discovered on disk, naming the files to go and find rather than only saying
+// that the set is incomplete.
+//
+// It unwraps to ErrMissingSegment, so code written against the sentinel keeps
+// working:
+//
+//	if _, err := libewf.OpenPath(path); errors.Is(err, libewf.ErrMissingSegment) {
+//		var missing *libewf.MissingSegmentsError
+//		if errors.As(err, &missing) {
+//			// missing.Expected names the files that were not found
+//		}
+//	}
+type MissingSegmentsError struct {
+	// Path is the path the set was discovered from.
+	Path string
+
+	// Missing lists the absent segment numbers, ascending.
+	Missing []uint32
+
+	// Present lists the segment numbers that were found, ascending.
+	Present []uint32
+
+	// Expected names the missing segment files, parallel to Missing. It is
+	// empty when the naming family could not express them.
+	Expected []string
+}
+
+func (e *MissingSegmentsError) Error() string {
+	numbers := make([]string, len(e.Missing))
+	for i, number := range e.Missing {
+		numbers[i] = strconv.FormatUint(uint64(number), 10)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "libewf: segment set %s is incomplete: segment", e.Path)
+	if len(e.Missing) != 1 {
+		b.WriteByte('s')
+	}
+	fmt.Fprintf(&b, " %s missing", listSegments(numbers))
+	if len(e.Expected) > 0 {
+		fmt.Fprintf(&b, " (expected %s)", listSegments(e.Expected))
+	}
+	fmt.Fprintf(&b, "; %d of %d present", len(e.Present), len(e.Present)+len(e.Missing))
+	return b.String()
+}
+
+func (e *MissingSegmentsError) Unwrap() error { return ErrMissingSegment }
+
+func listSegments(items []string) string {
+	if len(items) <= maxListedSegments {
+		return strings.Join(items, ", ")
+	}
+	return fmt.Sprintf("%s and %d more",
+		strings.Join(items[:maxListedSegments], ", "), len(items)-maxListedSegments)
+}
