@@ -220,7 +220,23 @@ func fieldNumber(field string, carry uint32) (uint32, bool) {
 	return 0, false
 }
 
+// Segment is one member of a set: where it is, and the number its name says it
+// holds.
+type Segment struct {
+	// Number is the segment number the file name denotes. It is 0 only for a
+	// path whose extension names no EWF family, where the name says nothing
+	// about position and the set is that one file.
+	Number uint32
+
+	// Path is the path to the file.
+	Path string
+}
+
 // Set is a segment set discovered on disk, ordered by segment number.
+//
+// The number and the path are held together rather than in parallel slices,
+// because the two cannot then fall out of step — which is what happens the
+// moment one member has no number to put in the other slice.
 type Set struct {
 	// Family is the naming family shared by every member, or the zero Family
 	// when the path named no family and the set is the one file given.
@@ -232,11 +248,26 @@ type Set struct {
 	// Stem is the file name every member shares, without its extension.
 	Stem string
 
-	// Paths lists the segment files, ascending by segment number.
-	Paths []string
+	// Segments lists the members, ascending by segment number.
+	Segments []Segment
+}
 
-	// Numbers lists the segment numbers, parallel to Paths.
-	Numbers []uint32
+// Paths returns the segment paths in segment order.
+func (s *Set) Paths() []string {
+	paths := make([]string, len(s.Segments))
+	for i, segment := range s.Segments {
+		paths[i] = segment.Path
+	}
+	return paths
+}
+
+// Numbers returns the segment numbers in ascending order.
+func (s *Set) Numbers() []uint32 {
+	numbers := make([]uint32, len(s.Segments))
+	for i, segment := range s.Segments {
+		numbers[i] = segment.Number
+	}
+	return numbers
 }
 
 // Discover finds every segment that belongs with path and returns them in
@@ -270,7 +301,9 @@ func Discover(path string) (*Set, error) {
 
 	family, self, ok := ParseFamily(ext)
 	if !ok {
-		return &Set{Dir: dir, Stem: stem, Paths: []string{path}}, nil
+		// The name implies no position, so the segment carries no number. The
+		// reader still reads the real one out of the file header.
+		return &Set{Dir: dir, Stem: stem, Segments: []Segment{{Path: path}}}, nil
 	}
 
 	entries, err := os.ReadDir(dir)
@@ -326,10 +359,12 @@ func Discover(path string) (*Set, error) {
 	}
 	sort.Slice(numbers, func(i, j int) bool { return numbers[i] < numbers[j] })
 
-	set := &Set{Family: family, Dir: dir, Stem: stem, Numbers: numbers}
-	set.Paths = make([]string, 0, len(numbers))
+	set := &Set{Family: family, Dir: dir, Stem: stem, Segments: make([]Segment, 0, len(numbers))}
 	for _, number := range numbers {
-		set.Paths = append(set.Paths, filepath.Join(dir, found[number]))
+		set.Segments = append(set.Segments, Segment{
+			Number: number,
+			Path:   filepath.Join(dir, found[number]),
+		})
 	}
 	return set, nil
 }
@@ -341,18 +376,20 @@ func Discover(path string) (*Set, error) {
 // indistinguishable on disk from a complete one — nothing in a directory says
 // how many segments the acquisition wrote — so that case is left to the
 // reader, which requires the highest segment to carry a "done" section.
+// A set whose members carry no number — a path that named no family — has no
+// holes to report, which falls out of the highest number being 0.
 func (s *Set) Missing() []uint32 {
-	if len(s.Numbers) == 0 {
+	if len(s.Segments) == 0 {
 		return nil
 	}
 
-	present := make(map[uint32]struct{}, len(s.Numbers))
-	for _, number := range s.Numbers {
-		present[number] = struct{}{}
+	present := make(map[uint32]struct{}, len(s.Segments))
+	for _, segment := range s.Segments {
+		present[segment.Number] = struct{}{}
 	}
 
 	var missing []uint32
-	for number := uint32(1); number <= s.Numbers[len(s.Numbers)-1]; number++ {
+	for number := uint32(1); number <= s.Segments[len(s.Segments)-1].Number; number++ {
 		if _, ok := present[number]; !ok {
 			missing = append(missing, number)
 		}

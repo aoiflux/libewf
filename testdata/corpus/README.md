@@ -27,6 +27,27 @@ Two oracles are supported:
 original device before writing the container. Recomputing them from our decoded
 stream is a genuine external check — this is what `libewf.Verify` does.
 
+### Acquisition dates need two expectations
+
+EWF stores the acquisition date three ways and only one of them, the POSIX
+timestamp `header2` and `case_data` write, denotes an instant. Six
+space-separated numbers (`header`, as `encase2`, `encase3`, `ewf`, `ftk` and
+`smart` write it) and the ctime-like string are wall clocks with no timezone,
+so the reader interprets them in the local zone.
+
+The manifest therefore records both readings of the same `ewfinfo` date:
+
+| Field             | Asserted for                    | Why                                           |
+| ----------------- | ------------------------------- | --------------------------------------------- |
+| `acquiryDateUnix` | dates stored as a POSIX timestamp | zone-bearing, so the instant is portable     |
+| `acquiryDateWall` | dates stored without a timezone   | the instant is not portable; the wall clock is |
+
+Asserting an instant for a zone-less date pins the timezone the corpus was
+generated in, and fails on every machine elsewhere — which it did, for those
+five dialects, until the wall-clock expectation was added. The wall clock still
+catches a date read from the wrong section or with its fields transposed, which
+is what this expectation is for.
+
 ## Populating it
 
 ### From existing images (no tooling required)

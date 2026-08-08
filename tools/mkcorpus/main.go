@@ -369,7 +369,8 @@ func generate(outDir string, sizeMiB int, keepRaw bool) ([]corpus.Entry, error) 
 				Description:     v.name,
 				ExaminerName:    acqExaminerName,
 				Notes:           acqNotes,
-				AcquiryDateUnix: digests.acquiryDateUnix,
+				AcquiryDateUnix: acquiryDateUnix(digests.acquiryDate),
+				AcquiryDateWall: acquiryDateWall(digests.acquiryDate),
 			},
 		}
 		entries = append(entries, entry)
@@ -468,9 +469,32 @@ type digestInfo struct {
 	computedMD5, computedSHA1 string
 	storedMD5, storedSHA1     string
 
-	// acquiryDateUnix is ewfinfo's reading of the acquisition date. Zero when
-	// it could not be read or parsed, which means "do not assert it".
-	acquiryDateUnix int64
+	// acquiryDate is ewfinfo's reading of the acquisition date. The zero time
+	// means it could not be read or parsed, and so must not be asserted.
+	//
+	// It is recorded two ways, because only one of the three encodings EWF uses
+	// denotes an instant. Which reading the corpus test compares is decided by
+	// the encoding it finds in the image; see corpus.ExpectedAcquisition.
+	acquiryDate time.Time
+}
+
+// acquiryDateUnix and acquiryDateWall render ewfinfo's reading of the
+// acquisition date the two ways the corpus can assert it. Both are written for
+// every entry; the test uses whichever the stored encoding gives meaning to,
+// because a zone-less date has no instant and a POSIX timestamp has no wall
+// clock outside the zone it is read in.
+func acquiryDateUnix(when time.Time) int64 {
+	if when.IsZero() {
+		return 0
+	}
+	return when.Unix()
+}
+
+func acquiryDateWall(when time.Time) string {
+	if when.IsZero() {
+		return ""
+	}
+	return when.Format(corpus.AcquiryDateWallLayout)
 }
 
 // Provenance passed to ewfacquire on the command line. Because these are inputs
@@ -587,7 +611,7 @@ func readStoredDigests(firstSegment string, out *digestInfo) error {
 
 		if value, ok := trimAfter(trimmed, "Acquisition date:"); ok {
 			if when, ok := parseEwfinfoDate(value); ok {
-				out.acquiryDateUnix = when.Unix()
+				out.acquiryDate = when
 			}
 		}
 

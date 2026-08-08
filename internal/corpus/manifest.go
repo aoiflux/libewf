@@ -102,8 +102,29 @@ type ExpectedAcquisition struct {
 	// AcquiryDateUnix is the acquisition instant in seconds since the epoch.
 	// Zero means "do not check". Header sections store this three different
 	// ways, so pinning it catches a date decoded from the wrong encoding.
+	//
+	// It applies only to images whose stored date carries a timezone — a POSIX
+	// timestamp, as header2 and case_data write. A date stored as six
+	// space-separated numbers or as a ctime-like string denotes no instant at
+	// all until a zone is assumed, so asserting one would only hold in the
+	// timezone the corpus was generated in. Use AcquiryDateWall for those.
 	AcquiryDateUnix int64 `json:"acquiryDateUnix,omitempty"`
+
+	// AcquiryDateWall is the acquisition wall clock, "2006-01-02 15:04:05",
+	// for images whose stored date carries no timezone. Empty means
+	// "do not check".
+	//
+	// It is the same reading as AcquiryDateUnix, written the way a zone-less
+	// date can actually be checked: the reader interprets the stored fields in
+	// the local zone, so the wall clock it reports must be the one the writer
+	// stored, on any machine. Comparing that still catches a date taken from
+	// the wrong section or with its fields transposed, which is what this
+	// expectation is for.
+	AcquiryDateWall string `json:"acquiryDateWall,omitempty"`
 }
+
+// AcquiryDateWallLayout is the format of ExpectedAcquisition.AcquiryDateWall.
+const AcquiryDateWallLayout = "2006-01-02 15:04:05"
 
 // Manifest is the corpus index.
 type Manifest struct {

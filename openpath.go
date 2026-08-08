@@ -95,12 +95,12 @@ func discoverSegments(path string, allowIncomplete bool) ([]string, error) {
 			return nil, &ewferr.MissingSegmentsError{
 				Path:     path,
 				Missing:  missing,
-				Present:  set.Numbers,
+				Present:  set.Numbers(),
 				Expected: set.Names(missing),
 			}
 		}
 	}
-	return set.Paths, nil
+	return set.Paths(), nil
 }
 
 // pathReader is a Reader over files this package opened, and therefore has to

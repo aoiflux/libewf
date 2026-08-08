@@ -240,7 +240,7 @@ func names(paths []string) []string {
 
 func assertSet(t *testing.T, set *Set, want ...string) {
 	t.Helper()
-	got := names(set.Paths)
+	got := names(set.Paths())
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("discovered %v, want %v", got, want)
 	}
@@ -400,16 +400,16 @@ func TestDiscoverAdmitsLetterPairsWhenSaturated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Discover() error = %v", err)
 	}
-	if len(set.Paths) != 101 {
-		t.Fatalf("discovered %d segments, want 101", len(set.Paths))
+	if len(set.Paths()) != 101 {
+		t.Fatalf("discovered %d segments, want 101", len(set.Paths()))
 	}
-	if got := filepath.Base(set.Paths[98]); got != "disk.E99" {
+	if got := filepath.Base(set.Paths()[98]); got != "disk.E99" {
 		t.Errorf("segment 99 = %s, want disk.E99", got)
 	}
-	if got := filepath.Base(set.Paths[99]); got != "disk.EAA" {
+	if got := filepath.Base(set.Paths()[99]); got != "disk.EAA" {
 		t.Errorf("segment 100 = %s, want disk.EAA: .E99 must sort before .EAA", got)
 	}
-	if got := filepath.Base(set.Paths[100]); got != "disk.EAB" {
+	if got := filepath.Base(set.Paths()[100]); got != "disk.EAB" {
 		t.Errorf("segment 101 = %s, want disk.EAB", got)
 	}
 }
@@ -460,6 +460,37 @@ func TestDiscoverNonSegmentExtension(t *testing.T) {
 	assertSet(t, set, "disk.raw")
 	if missing := set.Missing(); len(missing) != 0 {
 		t.Errorf("Missing() = %v, want none for a file that names no set", missing)
+	}
+}
+
+// TestDiscoverRendersEverySegment pins what the parallel accessors promise:
+// every member appears in both renderings, including the member of a set whose
+// name carries no number. Found by fuzzing, where a file named "0" produced a
+// path with no number beside it.
+func TestDiscoverRendersEverySegment(t *testing.T) {
+	dir := t.TempDir()
+
+	for _, name := range []string{"0", "disk.raw", "disk"} {
+		t.Run(name, func(t *testing.T) {
+			set, err := Discover(touch(t, dir, name))
+			if err != nil {
+				t.Fatalf("Discover() error = %v", err)
+			}
+			if len(set.Segments) != 1 {
+				t.Fatalf("discovered %d segments, want 1", len(set.Segments))
+			}
+			if len(set.Paths()) != len(set.Segments) || len(set.Numbers()) != len(set.Segments) {
+				t.Fatalf("%d segments render as %d paths and %d numbers",
+					len(set.Segments), len(set.Paths()), len(set.Numbers()))
+			}
+			if set.Segments[0].Number != 0 {
+				t.Errorf("segment number = %d, want 0: the name implies no position",
+					set.Segments[0].Number)
+			}
+			if missing := set.Missing(); len(missing) != 0 {
+				t.Errorf("Missing() = %v, want none for a name that implies no set", missing)
+			}
+		})
 	}
 }
 

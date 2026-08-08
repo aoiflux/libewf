@@ -1,6 +1,7 @@
 package libewf_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	libewf "github.com/aoiflux/libewf"
+	"github.com/aoiflux/libewf/internal/corpus"
 )
 
 // These tests run against the golden corpus rather than synthetic images,
@@ -156,6 +158,78 @@ func TestOpenPathMultiSegment(t *testing.T) {
 				t.Error("OpenPath decoded a different device than OpenSegments over the same set")
 			}
 		})
+	}
+}
+
+// TestOpenPathAgainstCorpusOracles decodes every multi-segment corpus set from
+// one path and checks the result against sources independent of this library:
+// the SHA-256 of the raw image that was acquired, and the acquisition digests
+// the imaging tool embedded.
+//
+// The comparisons above prove OpenPath agrees with OpenSegments, which would
+// hold just as well if both were wrong. This is the assertion that says the
+// discovered order is the acquisition order — a set assembled in the wrong
+// order still decodes, and produces a device that is quietly not the evidence.
+func TestOpenPathAgainstCorpusOracles(t *testing.T) {
+	manifest, present, err := corpus.Load(corpusDir)
+	if err != nil {
+		t.Fatalf("loading corpus manifest: %v", err)
+	}
+	if !present {
+		t.Skipf("no corpus present in %s; run: go run ./tools/mkcorpus -out %s", corpusDir, corpusDir)
+	}
+
+	checked := 0
+	for _, entry := range manifest.Entries {
+		if len(entry.Segments) < 2 || entry.ExpectIncomplete {
+			continue
+		}
+		if entry.DecodedSHA256 == "" && !entry.RequireVerifyOK {
+			continue
+		}
+		checked++
+
+		t.Run(entry.Name, func(t *testing.T) {
+			first := filepath.Join(corpusDir, entry.Segments[0])
+
+			paths, err := libewf.SegmentPaths(first)
+			if err != nil {
+				t.Fatalf("SegmentPaths() error = %v", err)
+			}
+			if len(paths) != len(entry.Segments) {
+				t.Fatalf("SegmentPaths() found %d segments, want the %d the manifest records",
+					len(paths), len(entry.Segments))
+			}
+
+			r, err := libewf.OpenPath(first)
+			if err != nil {
+				t.Fatalf("OpenPath() error = %v", err)
+			}
+			t.Cleanup(func() { _ = r.Close() })
+
+			if entry.DecodedSHA256 != "" {
+				if got := deviceDigest(t, r); got != strings.ToLower(entry.DecodedSHA256) {
+					t.Errorf("decoded SHA-256 = %s, want %s: the device decoded from a "+
+						"discovered set is not the raw image that was acquired",
+						got, entry.DecodedSHA256)
+				}
+			}
+
+			if entry.RequireVerifyOK {
+				result, err := libewf.Verify(context.Background(), r)
+				if err != nil {
+					t.Fatalf("Verify() error = %v", err)
+				}
+				if !result.OK() {
+					t.Errorf("Verify() reported the image did not verify: %d unreadable span(s)",
+						len(result.BadRanges))
+				}
+			}
+		})
+	}
+
+	if checked == 0 {
+		t.Skip("corpus holds no multi-segment set with an independent oracle")
 	}
 }
 

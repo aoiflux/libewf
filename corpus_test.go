@@ -6,9 +6,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -191,17 +193,185 @@ func checkAcquisition(t *testing.T, got *metadata.Acquisition, want *corpus.Expe
 		}
 	}
 
-	if want.AcquiryDateUnix != 0 {
-		if got.AcquiryDate.IsZero() {
-			t.Errorf("Acquisition.AcquiryDate is zero, want %s (raw %q)",
-				time.Unix(want.AcquiryDateUnix, 0), got.AcquiryDateRaw)
-		} else if gotUnix := got.AcquiryDate.Unix(); gotUnix != want.AcquiryDateUnix {
-			t.Errorf("Acquisition.AcquiryDate = %s (%d), want %s (%d); raw value was %q",
+	checkAcquiryDate(t, got, want)
+}
+
+// checkAcquiryDate compares the acquisition date the way the stored encoding
+// allows.
+//
+// EWF stores this three ways and only one of them, the POSIX timestamp, denotes
+// an instant. Six space-separated numbers and a ctime-like string are wall
+// clocks with no zone, which the reader therefore interprets in the local zone.
+// Asserting an absolute instant for those would pin the timezone the corpus
+// happened to be generated in, and fail everywhere else — so they are compared
+// as the wall clock the writer stored, which holds on any machine and still
+// catches a date read from the wrong section or with its fields transposed.
+func checkAcquiryDate(t *testing.T, got *metadata.Acquisition, want *corpus.ExpectedAcquisition) {
+	t.Helper()
+
+	if mismatch := acquiryDateMismatch(got, want); mismatch != "" {
+		t.Error(mismatch)
+	}
+}
+
+// acquiryDateMismatch returns why the decoded acquisition date is not the
+// expected one, or "" when it is. It is separate from the assertion so that the
+// rule it encodes can be tested against dates from several timezones, which is
+// the one thing a test running in a single zone cannot otherwise check.
+func acquiryDateMismatch(got *metadata.Acquisition, want *corpus.ExpectedAcquisition) string {
+	if want.AcquiryDateUnix == 0 && want.AcquiryDateWall == "" {
+		return ""
+	}
+	if got.AcquiryDate.IsZero() {
+		return fmt.Sprintf("Acquisition.AcquiryDate is zero, want %s (raw %q)",
+			expectedDateText(want), got.AcquiryDateRaw)
+	}
+
+	// The stored text decides which comparison is meaningful, and it is the
+	// text as stored rather than anything derived from it: an all-digit date
+	// is the POSIX form, everything else is zone-less.
+	if _, err := strconv.ParseInt(strings.TrimSpace(got.AcquiryDateRaw), 10, 64); err == nil {
+		if want.AcquiryDateUnix == 0 {
+			return fmt.Sprintf("image stores the acquisition date as a POSIX timestamp (%q) but the "+
+				"manifest records only a wall clock; regenerate the corpus with: "+
+				"go run ./tools/mkcorpus -out %s", got.AcquiryDateRaw, corpusDir)
+		}
+		if gotUnix := got.AcquiryDate.Unix(); gotUnix != want.AcquiryDateUnix {
+			return fmt.Sprintf("Acquisition.AcquiryDate = %s (%d), want %s (%d); raw value was %q",
 				got.AcquiryDate, gotUnix,
 				time.Unix(want.AcquiryDateUnix, 0), want.AcquiryDateUnix,
 				got.AcquiryDateRaw)
 		}
+		return ""
 	}
+
+	if want.AcquiryDateWall == "" {
+		return fmt.Sprintf("image stores the acquisition date without a timezone (%q) but the manifest "+
+			"records only an instant, which holds solely in the timezone the corpus was generated in; "+
+			"regenerate the corpus with: go run ./tools/mkcorpus -out %s",
+			got.AcquiryDateRaw, corpusDir)
+	}
+	if gotWall := got.AcquiryDate.Format(corpus.AcquiryDateWallLayout); gotWall != want.AcquiryDateWall {
+		return fmt.Sprintf("Acquisition.AcquiryDate = %s, want the wall clock %s; raw value was %q",
+			gotWall, want.AcquiryDateWall, got.AcquiryDateRaw)
+	}
+	return ""
+}
+
+// TestAcquiryDateExpectationSurvivesTimezone is the check the corpus test
+// cannot make of itself: it runs in one timezone, and the expectation it
+// asserts has to hold in every one.
+//
+// The same image is presented as it would decode on machines in four zones. A
+// zone-less date yields a different instant on each, which is exactly why
+// pinning one failed everywhere outside the zone the corpus was generated in.
+func TestAcquiryDateExpectationSurvivesTimezone(t *testing.T) {
+	zones := []*time.Location{
+		time.UTC,
+		time.FixedZone("EDT", -4*3600),
+		time.FixedZone("IST", 5*3600+1800),
+		time.FixedZone("LINT", 14*3600),
+	}
+	want := &corpus.ExpectedAcquisition{AcquiryDateWall: "2026-07-26 12:32:18"}
+
+	instants := make(map[int64]struct{}, len(zones))
+	for _, zone := range zones {
+		got := &metadata.Acquisition{
+			AcquiryDateRaw: "2026 7 26 12 32 18",
+			AcquiryDate:    time.Date(2026, 7, 26, 12, 32, 18, 0, zone),
+		}
+		if mismatch := acquiryDateMismatch(got, want); mismatch != "" {
+			t.Errorf("in %s: %s", zone, mismatch)
+		}
+		instants[got.AcquiryDate.Unix()] = struct{}{}
+	}
+
+	// Without this the test could pass while proving nothing: the zones have to
+	// actually disagree about the instant for the wall clock to be the thing
+	// under test.
+	if len(instants) != len(zones) {
+		t.Fatalf("the %d zones produced %d distinct instants; they must all differ", len(zones), len(instants))
+	}
+}
+
+func TestAcquiryDateMismatch(t *testing.T) {
+	const (
+		posixRaw = "1785083538"
+		wallRaw  = "2026 7 26 12 32 18"
+	)
+	posixDate := time.Unix(1785083538, 0)
+	wallDate := time.Date(2026, 7, 26, 12, 32, 18, 0, time.Local)
+
+	tests := []struct {
+		name       string
+		got        metadata.Acquisition
+		want       corpus.ExpectedAcquisition
+		wantReport bool
+	}{
+		{
+			name: "no expectation",
+			got:  metadata.Acquisition{AcquiryDateRaw: wallRaw, AcquiryDate: wallDate},
+		},
+		{
+			name: "posix instant matches",
+			got:  metadata.Acquisition{AcquiryDateRaw: posixRaw, AcquiryDate: posixDate},
+			want: corpus.ExpectedAcquisition{AcquiryDateUnix: 1785083538},
+		},
+		{
+			name:       "posix instant differs",
+			got:        metadata.Acquisition{AcquiryDateRaw: posixRaw, AcquiryDate: posixDate},
+			want:       corpus.ExpectedAcquisition{AcquiryDateUnix: 1785083539},
+			wantReport: true,
+		},
+		{
+			name:       "posix date with only a wall expectation is a stale manifest",
+			got:        metadata.Acquisition{AcquiryDateRaw: posixRaw, AcquiryDate: posixDate},
+			want:       corpus.ExpectedAcquisition{AcquiryDateWall: "2026-07-26 12:32:18"},
+			wantReport: true,
+		},
+		{
+			name: "zone-less wall clock matches",
+			got:  metadata.Acquisition{AcquiryDateRaw: wallRaw, AcquiryDate: wallDate},
+			want: corpus.ExpectedAcquisition{AcquiryDateWall: "2026-07-26 12:32:18"},
+		},
+		{
+			// The check exists to catch a date taken from the wrong section or
+			// with its fields transposed; a wall clock still catches both.
+			name:       "zone-less wall clock transposed",
+			got:        metadata.Acquisition{AcquiryDateRaw: wallRaw, AcquiryDate: time.Date(2026, 7, 26, 12, 18, 32, 0, time.Local)},
+			want:       corpus.ExpectedAcquisition{AcquiryDateWall: "2026-07-26 12:32:18"},
+			wantReport: true,
+		},
+		{
+			name:       "zone-less date with only an instant expectation is a stale manifest",
+			got:        metadata.Acquisition{AcquiryDateRaw: wallRaw, AcquiryDate: wallDate},
+			want:       corpus.ExpectedAcquisition{AcquiryDateUnix: 1785083538},
+			wantReport: true,
+		},
+		{
+			name:       "date not decoded at all",
+			got:        metadata.Acquisition{AcquiryDateRaw: wallRaw},
+			want:       corpus.ExpectedAcquisition{AcquiryDateWall: "2026-07-26 12:32:18"},
+			wantReport: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mismatch := acquiryDateMismatch(&tt.got, &tt.want)
+			if got := mismatch != ""; got != tt.wantReport {
+				t.Errorf("acquiryDateMismatch() reported %v (%q), want reported = %v",
+					got, mismatch, tt.wantReport)
+			}
+		})
+	}
+}
+
+func expectedDateText(want *corpus.ExpectedAcquisition) string {
+	if want.AcquiryDateWall != "" {
+		return want.AcquiryDateWall
+	}
+	return time.Unix(want.AcquiryDateUnix, 0).String()
 }
 
 func checkGranularity(t *testing.T, r libewf.Reader) {
